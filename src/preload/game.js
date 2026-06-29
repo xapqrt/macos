@@ -86,7 +86,11 @@ const flushStyles = () => {
   styleRaf = null;
   const fns = styleQueue.slice();
   styleQueue.length = 0;
-  for (let i = 0; i < fns.length; i++) fns[i]();
+  for (let i = 0; i < fns.length; i++) {
+    __juicePerf.start("flushStyles_item");
+    fns[i]();
+    __juicePerf.end("flushStyles_item");
+  }
 };
 const queueStyleWrite = (fn) => {
   styleQueue.push(fn);
@@ -114,6 +118,39 @@ const observeForElement = (selector, functionToRun, target = document.body) => {
   });
   observer.observe(target, { childList: true, subtree: true });
   return observer;
+};
+
+// Performance monitor — records slow operations in memory
+// After a freeze, run: __juicePerf.dump() in DevTools
+window.__juicePerf = {
+  _entries: [],
+  _maxEntries: 200,
+  _threshold: 50, // ms — only log operations slower than this
+  _pending: Object.create(null),
+  start(label) {
+    this._pending[label] = performance.now();
+  },
+  end(label) {
+    const start = this._pending[label];
+    if (!start) return;
+    delete this._pending[label];
+    const elapsed = performance.now() - start;
+    if (elapsed < this._threshold) return;
+    this._entries.push({ label, elapsed, at: performance.now() });
+    if (this._entries.length > this._maxEntries) this._entries.shift();
+  },
+  dump() {
+    const slow = this._entries.filter(e => e.elapsed > 100).sort((a,b) => b.elapsed - a.elapsed);
+    console.log(`__juicePerf: ${this._entries.length} total, ${slow.length} >100ms`);
+    for (const e of slow.slice(0, 30)) console.log(`  ${e.label}: ${e.elapsed.toFixed(1)}ms`);
+    return slow;
+  },
+  clear() { this._entries.length = 0; },
+  flushAll() {
+    for (const label in this._pending) {
+      this.end(label);
+    }
+  }
 };
 
 const originalConsole = {
@@ -1978,7 +2015,6 @@ window.addEventListener("DOMContentLoaded", async () => {
       let lastFrameTime = -1;
       let currentFrameWeaponSig = null;
       let lastClearMask = 0;
-      let _cachedWeaponCfg = null, _cachedWeaponIds = "";
 
       const _cfgFallback = { size: 1.0, offsetX: 0, offsetY: 0, offsetZ: 0 };
       const _globalFallback = { wireframe: false, colorEnabled: false, rgb: false, colorHex: "#FFFFFF" };
@@ -1995,8 +2031,6 @@ window.addEventListener("DOMContentLoaded", async () => {
       };
 
       const _clearSeen = () => {
-        _cachedWeaponCfg = null;
-        _cachedWeaponIds = "";
         if (seenCount > 64) { seenMatricesThisFrame = Object.create(null); seenCount = 0; return; }
         for (const k in seenMatricesThisFrame) delete seenMatricesThisFrame[k];
         seenCount = 0;
@@ -2013,7 +2047,8 @@ window.addEventListener("DOMContentLoaded", async () => {
         return origBindTexture(target, texture);
       };
 
-      gl.uniformMatrix4fv = (location, transpose, data, srcOffset, srcLength) => {
+      const _juiceUMF4fv = (location, transpose, data, srcOffset, srcLength) => {
+        __juicePerf.start("uniformMatrix4fv");
         activeThisFrame = false;
 
         const now = performance.now();
@@ -2035,6 +2070,7 @@ window.addEventListener("DOMContentLoaded", async () => {
             Math.abs(slice[11]) > 0.001 ||
             Math.abs(slice[15] - 1.0) > 0.001
           ) {
+            __juicePerf.end("uniformMatrix4fv");
             return origUniformMatrix4fv(location, transpose, data, srcOffset, srcLength);
           }
 
@@ -2042,12 +2078,14 @@ window.addEventListener("DOMContentLoaded", async () => {
           const sigNum = s0 * 1000000 + s1 * 1000 + s2;
 
           if (lastClearMask !== 256) {
+            __juicePerf.end("uniformMatrix4fv");
             return origUniformMatrix4fv(location, transpose, data, srcOffset, srcLength);
           }
 
           if (weaponKeyframeNumMap[sigNum] !== undefined) {
             const fpNum = (Math.round(slice[0] * 1000) * 1000000000000) + (Math.round(slice[5] * 1000) * 1000000000) + (Math.round(slice[10] * 1000) * 1000000) + (Math.round(slice[12] * 10000) * 100) + Math.round(slice[14] * 10000);
             if (seenMatricesThisFrame[fpNum]) {
+              __juicePerf.end("uniformMatrix4fv");
               return origUniformMatrix4fv(location, transpose, data, srcOffset, srcLength);
             }
             seenMatricesThisFrame[fpNum] = 1;
@@ -2065,14 +2103,7 @@ window.addEventListener("DOMContentLoaded", async () => {
               inspectingWeaponId = null;
             }
 
-            let weaponCfg;
-            if (_cachedWeaponCfg && _cachedWeaponIds === currentWeaponId) {
-              weaponCfg = _cachedWeaponCfg;
-            } else {
-              weaponCfg = window.dawnWeaponConfig?.getSettings?.(currentWeaponId) || _cfgFallback;
-              _cachedWeaponCfg = weaponCfg;
-              _cachedWeaponIds = currentWeaponId;
-            }
+            const weaponCfg = window.dawnWeaponConfig?.getSettings?.(currentWeaponId) || _cfgFallback;
             const globalCfg = window.dawnWeaponConfig || _globalFallback;
 
             if (globalCfg.colorEnabled) {
@@ -2080,12 +2111,12 @@ window.addEventListener("DOMContentLoaded", async () => {
                 const [r, g, b] = hsvToRgb((now / 3000) * 360);
                 rgbPixel[0] = r; rgbPixel[1] = g; rgbPixel[2] = b; rgbPixel[3] = 255;
                 origBindTexture(gl.TEXTURE_2D, rgbTexture);
-                gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, rgbPixel);
+                gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, rgbPixel);
               } else {
                 const c = _parseHex(globalCfg.colorHex);
                 rgbPixel[0] = c[0]; rgbPixel[1] = c[1]; rgbPixel[2] = c[2]; rgbPixel[3] = 255;
                 origBindTexture(gl.TEXTURE_2D, rgbTexture);
-                gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, rgbPixel);
+                gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, rgbPixel);
               }
             } else if (lastBoundTexture) {
               origBindTexture(gl.TEXTURE_2D, lastBoundTexture);
@@ -2153,12 +2184,14 @@ window.addEventListener("DOMContentLoaded", async () => {
 
             if (globalCfg.wireframe) activeThisFrame = true;
 
+            __juicePerf.end("uniformMatrix4fv");
             return origUniformMatrix4fv(location, transpose, matBuf, 0, 16);
           }
 
           if (armSigsNum.has(sigNum)) {
             const fpNum = (Math.round(slice[0] * 1000) * 1000000000000) + (Math.round(slice[5] * 1000) * 1000000000) + (Math.round(slice[10] * 1000) * 1000000) + (Math.round(slice[12] * 10000) * 100) + Math.round(slice[14] * 10000);
             if (seenMatricesThisFrame[fpNum]) {
+              __juicePerf.end("uniformMatrix4fv");
               return origUniformMatrix4fv(location, transpose, data, srcOffset, srcLength);
             }
             seenMatricesThisFrame[fpNum] = 1;
@@ -2169,18 +2202,11 @@ window.addEventListener("DOMContentLoaded", async () => {
             let armType = armSigToTypeNum[sigNum] || "left";
 
             if (armType === null) {
+              __juicePerf.end("uniformMatrix4fv");
               return origUniformMatrix4fv(location, transpose, data, srcOffset, srcLength);
             }
 
-            const armCacheKey = currentWeaponId + armType;
-            let armSettings;
-            if (_cachedWeaponCfg && _cachedWeaponIds === armCacheKey) {
-              armSettings = _cachedWeaponCfg;
-            } else {
-              armSettings = window.dawnWeaponConfig?.getArmSettings?.(currentWeaponId, armType) || _armFallback;
-              _cachedWeaponCfg = armSettings;
-              _cachedWeaponIds = armCacheKey;
-            }
+            const armSettings = window.dawnWeaponConfig?.getArmSettings?.(currentWeaponId, armType) || _armFallback;
 
             matBuf.set(slice);
 
@@ -2225,12 +2251,12 @@ window.addEventListener("DOMContentLoaded", async () => {
                 const [r, g, b] = hsvToRgb((now / 3000) * 360);
                 rgbPixel[0] = r; rgbPixel[1] = g; rgbPixel[2] = b; rgbPixel[3] = 255;
                 origBindTexture(gl.TEXTURE_2D, rgbTexture);
-                gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, rgbPixel);
+                gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, rgbPixel);
               } else {
                 const c = _parseHex(armSettings.colorHex || "#FFFFFF");
                 rgbPixel[0] = c[0]; rgbPixel[1] = c[1]; rgbPixel[2] = c[2]; rgbPixel[3] = 255;
                 origBindTexture(gl.TEXTURE_2D, rgbTexture);
-                gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, rgbPixel);
+                gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, rgbPixel);
               }
             } else if (lastBoundTexture) {
               origBindTexture(gl.TEXTURE_2D, lastBoundTexture);
@@ -2238,29 +2264,38 @@ window.addEventListener("DOMContentLoaded", async () => {
 
             if (armSettings.wireframe) activeThisFrame = true;
 
+            __juicePerf.end("uniformMatrix4fv");
             return origUniformMatrix4fv(location, transpose, matBuf, 0, 16);
           }
         }
 
+        __juicePerf.end("uniformMatrix4fv");
         return origUniformMatrix4fv(location, transpose, data, srcOffset, srcLength);
       };
+      gl.uniformMatrix4fv = _juiceUMF4fv;
 
       const toWireframe = (mode) =>
         (mode === gl.TRIANGLES || mode === gl.TRIANGLE_FAN || mode === gl.TRIANGLE_STRIP)
           ? gl.LINES : mode;
 
       gl.drawArrays = (mode, first, count) => {
+        __juicePerf.start("drawArrays");
         if (activeThisFrame) mode = toWireframe(mode);
         activeThisFrame = false;
         _clearSeen();
-        return origDrawArrays(mode, first, count);
+        const r = origDrawArrays(mode, first, count);
+        __juicePerf.end("drawArrays");
+        return r;
       };
 
       gl.drawElements = (mode, count, type, offset) => {
+        __juicePerf.start("drawElements");
         if (activeThisFrame) mode = toWireframe(mode);
         activeThisFrame = false;
         _clearSeen();
-        return origDrawElements(mode, count, type, offset);
+        const r = origDrawElements(mode, count, type, offset);
+        __juicePerf.end("drawElements");
+        return r;
       };
 
       return ctx;
