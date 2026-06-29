@@ -87,9 +87,8 @@ const flushStyles = () => {
   const fns = styleQueue.slice();
   styleQueue.length = 0;
   for (let i = 0; i < fns.length; i++) {
-    __juicePerf.start("flushStyles_item");
+    __juicePerf.inc("queueStyleWrite");
     fns[i]();
-    __juicePerf.end("flushStyles_item");
   }
 };
 const queueStyleWrite = (fn) => {
@@ -120,37 +119,47 @@ const observeForElement = (selector, functionToRun, target = document.body) => {
   return observer;
 };
 
-// Performance monitor — records slow operations in memory
+// Performance monitor — counts hook calls per frame
 // After a freeze, run: __juicePerf.dump() in DevTools
 window.__juicePerf = {
-  _entries: [],
-  _maxEntries: 200,
-  _threshold: 50, // ms — only log operations slower than this
-  _pending: Object.create(null),
-  start(label) {
-    this._pending[label] = performance.now();
+  _frameEntries: [],
+  _frameCounts: Object.create(null),
+  _frameTotalMs: 0,
+  _frameStart: 0,
+  _maxFrameEntries: 100,
+  reportThresholdMs: 100,
+  inc(label) {
+    if (!this._frameCounts[label]) this._frameCounts[label] = 0;
+    this._frameCounts[label]++;
   },
-  end(label) {
-    const start = this._pending[label];
-    if (!start) return;
-    delete this._pending[label];
-    const elapsed = performance.now() - start;
-    if (elapsed < this._threshold) return;
-    this._entries.push({ label, elapsed, at: performance.now() });
-    if (this._entries.length > this._maxEntries) this._entries.shift();
+  beginFrame() {
+    this._frameStart = performance.now();
+  },
+  endFrame() {
+    const elapsed = performance.now() - this._frameStart;
+    if (elapsed >= this.reportThresholdMs) {
+      this._frameEntries.push({
+        frameMs: Math.round(elapsed),
+        counts: Object.assign({}, this._frameCounts)
+      });
+      if (this._frameEntries.length > this._maxFrameEntries) this._frameEntries.shift();
+    }
+    this._frameCounts = Object.create(null);
   },
   dump() {
-    const slow = this._entries.filter(e => e.elapsed > 100).sort((a,b) => b.elapsed - a.elapsed);
-    console.log(`__juicePerf: ${this._entries.length} total, ${slow.length} >100ms`);
-    for (const e of slow.slice(0, 30)) console.log(`  ${e.label}: ${e.elapsed.toFixed(1)}ms`);
-    return slow;
-  },
-  clear() { this._entries.length = 0; },
-  flushAll() {
-    for (const label in this._pending) {
-      this.end(label);
+    if (this._frameEntries.length === 0) {
+      console.log('__juicePerf: no slow frames (all <', this.reportThresholdMs, 'ms)');
+      return [];
     }
-  }
+    const sorted = this._frameEntries.slice().sort((a,b) => b.frameMs - a.frameMs);
+    console.log(`__juicePerf: ${this._frameEntries.length} slow frames`);
+    for (const e of sorted.slice(0, 30)) {
+      const detail = Object.entries(e.counts).map(([k,v]) => `${k}=${v}`).join(', ');
+      console.log(`  frame ${e.frameMs}ms: ${detail}`);
+    }
+    return sorted;
+  },
+  clear() { this._frameEntries.length = 0; }
 };
 
 const originalConsole = {
@@ -2048,14 +2057,16 @@ window.addEventListener("DOMContentLoaded", async () => {
       };
 
       const _juiceUMF4fv = (location, transpose, data, srcOffset, srcLength) => {
-        __juicePerf.start("uniformMatrix4fv");
+        __juicePerf.inc("uniformMatrix4fv");
         activeThisFrame = false;
 
         const now = performance.now();
         if (now !== lastFrameTime) {
+          __juicePerf.endFrame();
           _clearSeen();
           currentFrameWeaponSig = null;
           lastFrameTime = now;
+          __juicePerf.beginFrame();
         }
 
         if (data && data.length >= 16) {
@@ -2070,7 +2081,6 @@ window.addEventListener("DOMContentLoaded", async () => {
             Math.abs(slice[11]) > 0.001 ||
             Math.abs(slice[15] - 1.0) > 0.001
           ) {
-            __juicePerf.end("uniformMatrix4fv");
             return origUniformMatrix4fv(location, transpose, data, srcOffset, srcLength);
           }
 
@@ -2078,14 +2088,12 @@ window.addEventListener("DOMContentLoaded", async () => {
           const sigNum = s0 * 1000000 + s1 * 1000 + s2;
 
           if (lastClearMask !== 256) {
-            __juicePerf.end("uniformMatrix4fv");
             return origUniformMatrix4fv(location, transpose, data, srcOffset, srcLength);
           }
 
           if (weaponKeyframeNumMap[sigNum] !== undefined) {
             const fpNum = (Math.round(slice[0] * 1000) * 1000000000000) + (Math.round(slice[5] * 1000) * 1000000000) + (Math.round(slice[10] * 1000) * 1000000) + (Math.round(slice[12] * 10000) * 100) + Math.round(slice[14] * 10000);
             if (seenMatricesThisFrame[fpNum]) {
-              __juicePerf.end("uniformMatrix4fv");
               return origUniformMatrix4fv(location, transpose, data, srcOffset, srcLength);
             }
             seenMatricesThisFrame[fpNum] = 1;
@@ -2184,14 +2192,12 @@ window.addEventListener("DOMContentLoaded", async () => {
 
             if (globalCfg.wireframe) activeThisFrame = true;
 
-            __juicePerf.end("uniformMatrix4fv");
             return origUniformMatrix4fv(location, transpose, matBuf, 0, 16);
           }
 
           if (armSigsNum.has(sigNum)) {
             const fpNum = (Math.round(slice[0] * 1000) * 1000000000000) + (Math.round(slice[5] * 1000) * 1000000000) + (Math.round(slice[10] * 1000) * 1000000) + (Math.round(slice[12] * 10000) * 100) + Math.round(slice[14] * 10000);
             if (seenMatricesThisFrame[fpNum]) {
-              __juicePerf.end("uniformMatrix4fv");
               return origUniformMatrix4fv(location, transpose, data, srcOffset, srcLength);
             }
             seenMatricesThisFrame[fpNum] = 1;
@@ -2202,7 +2208,6 @@ window.addEventListener("DOMContentLoaded", async () => {
             let armType = armSigToTypeNum[sigNum] || "left";
 
             if (armType === null) {
-              __juicePerf.end("uniformMatrix4fv");
               return origUniformMatrix4fv(location, transpose, data, srcOffset, srcLength);
             }
 
@@ -2264,12 +2269,10 @@ window.addEventListener("DOMContentLoaded", async () => {
 
             if (armSettings.wireframe) activeThisFrame = true;
 
-            __juicePerf.end("uniformMatrix4fv");
             return origUniformMatrix4fv(location, transpose, matBuf, 0, 16);
           }
         }
 
-        __juicePerf.end("uniformMatrix4fv");
         return origUniformMatrix4fv(location, transpose, data, srcOffset, srcLength);
       };
       gl.uniformMatrix4fv = _juiceUMF4fv;
@@ -2279,23 +2282,17 @@ window.addEventListener("DOMContentLoaded", async () => {
           ? gl.LINES : mode;
 
       gl.drawArrays = (mode, first, count) => {
-        __juicePerf.start("drawArrays");
         if (activeThisFrame) mode = toWireframe(mode);
         activeThisFrame = false;
         _clearSeen();
-        const r = origDrawArrays(mode, first, count);
-        __juicePerf.end("drawArrays");
-        return r;
+        return origDrawArrays(mode, first, count);
       };
 
       gl.drawElements = (mode, count, type, offset) => {
-        __juicePerf.start("drawElements");
         if (activeThisFrame) mode = toWireframe(mode);
         activeThisFrame = false;
         _clearSeen();
-        const r = origDrawElements(mode, count, type, offset);
-        __juicePerf.end("drawElements");
-        return r;
+        return origDrawElements(mode, count, type, offset);
       };
 
       return ctx;
