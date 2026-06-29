@@ -22,6 +22,31 @@ function applySwitches(settings) {
   app.commandLine.appendSwitch("disable-renderer-backgrounding");
   app.commandLine.appendSwitch("enable-features", "ParallelDownloading");
 
+  // Extreme GPU — force Chrome to use full GPU memory
+  app.commandLine.appendSwitch("force-gpu-mem-available-mb", "4096");
+  app.commandLine.appendSwitch("enable-webgl-image-chromium");
+  app.commandLine.appendSwitch("force-color-profile", "srgb");
+  app.commandLine.appendSwitch("canvas-msaa-sample-count", "0");
+  app.commandLine.appendSwitch("disable-2d-canvas-clip-aa");
+
+  // Disable unnecessary Chrome features — saves CPU and memory
+  app.commandLine.appendSwitch("disable-features", [
+    "ChromeWhatsNewUI",
+    "ChromeWhatsNewOnFOA",
+    "EnableExtensionActivityLogging",
+    "ShowAutofillSignatures",
+    "PasswordGeneration",
+    "AutofillServerCommunication",
+    "MediaRouter",
+    "TranslateUI",
+    "LanguageDetection",
+    "OptimizationGuideModelDownloading",
+    "FeedLoadingPlaceholder",
+    "InterestFeedContentSuggestions",
+    "NotificationIndicator",
+    "RendererPriorityManagement",
+  ].join(","));
+
   app.allowRendererProcessReuse = true;
 }
 

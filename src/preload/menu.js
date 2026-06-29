@@ -10,10 +10,9 @@ const { clipboard } = require("electron");
 let _menuInstance = null;
 let _pendingToggle = false;
 document.addEventListener("keydown", (e) => {
-  const isRS = e.code === "ShiftRight" || (e.key === "Shift" && e.location === 2);
+  const isRS = e.code === "ShiftRight" || e.code === "Shift" || (e.key === "Shift" && e.location === 2);
   if (!isRS) return;
   e.stopPropagation();
-  e.preventDefault();
   if (_menuInstance && _menuInstance.menuToggle) {
     if (!_menuInstance._domReady) _menuInstance._initMenuDOM();
     const isActive = _menuInstance.menuToggle.getAttribute("data-active") === "true";
@@ -23,10 +22,6 @@ document.addEventListener("keydown", (e) => {
   } else {
     _pendingToggle = true;
   }
-}, true);
-document.addEventListener("keyup", (e) => {
-  const isRS = e.code === "ShiftRight" || (e.key === "Shift" && e.location === 2);
-  if (isRS) { e.stopPropagation(); e.preventDefault(); }
 }, true);
 
 class Menu {
