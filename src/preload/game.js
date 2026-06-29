@@ -97,7 +97,9 @@ const observeForElement = (selector, functionToRun, target = document.body) => {
   const observer = new MutationObserver((mutations, obs) => {
     for (const mutation of mutations) {
       if (mutation.type === "childList" && mutation.addedNodes.length > 0) {
-        mutation.addedNodes.forEach(node => {
+        const nodes = mutation.addedNodes;
+        for (let ni = 0; ni < nodes.length; ni++) {
+          const node = nodes[ni];
           if (node.nodeType === Node.ELEMENT_NODE) {
             if (node.matches(selector)) {
               queueStyleWrite(() => functionToRun(node));
@@ -106,7 +108,7 @@ const observeForElement = (selector, functionToRun, target = document.body) => {
               if (inner) queueStyleWrite(() => functionToRun(inner));
             }
           }
-        });
+        }
       }
     }
   });
@@ -3184,12 +3186,13 @@ window.addEventListener("DOMContentLoaded", async () => {
       dm_players = [];
 
       const process = (conts, list) => {
-        conts.forEach((player) => {
+        for (let ci = 0; ci < conts.length; ci++) {
+          const player = conts[ci];
           const nicknameEl = player.querySelector(".nickname");
           const shortIdEl = player.querySelector(".short-id");
           const shortId = shortIdEl?.innerText.replace("#", "");
           const rawName = nicknameEl?.innerText.trim();
-          if (!nicknameEl || !rawName) return;
+          if (!nicknameEl || !rawName) continue;
 
           const entry = shortId ? nicknames[shortId] : undefined;
           const displayName = entry?.original || rawName;
@@ -3208,7 +3211,7 @@ window.addEventListener("DOMContentLoaded", async () => {
             playerCache.set(shortId, p);
             if (entry?.nickname) playerCache.set(entry.nickname, p);
           }
-        });
+        }
       };
 
       process(document.querySelectorAll(".desktop-game-interface .player-left-cont .player-cont"), red_players);
@@ -3257,7 +3260,8 @@ window.addEventListener("DOMContentLoaded", async () => {
       if (!settings.colored_killfeed) return;
       const killBarItems = document.querySelectorAll(".desktop-game-interface .kill-bar-cont .kill-bar-item");
 
-      killBarItems.forEach((item) => {
+      for (let ki = 0; ki < killBarItems.length; ki++) {
+        const item = killBarItems[ki];
         const killer = item.querySelector(".killer-name");
         const victim = item.querySelector(".name-kill");
 
@@ -3280,7 +3284,7 @@ window.addEventListener("DOMContentLoaded", async () => {
           const match = findPlayer(currentText);
           if (match?.nickname) setDisplay(victim, match.nickname);
         }
-      });
+      }
     };
 
     const processMessage = (message) => {
@@ -3334,7 +3338,8 @@ window.addEventListener("DOMContentLoaded", async () => {
     };
 
     const updateMessages = () => {
-      document.querySelectorAll(".desktop-game-interface .messages-cont .message").forEach(processMessage);
+      const msgs = document.querySelectorAll(".desktop-game-interface .messages-cont .message");
+      for (let mi = 0; mi < msgs.length; mi++) processMessage(msgs[mi]);
     };
 
     let updatingEndModal = false;
@@ -4147,7 +4152,8 @@ window.addEventListener("DOMContentLoaded", async () => {
         processMessage(message);
       };
 
-      chatCont.querySelectorAll(".message").forEach(observeMessage);
+      const existingMessages = chatCont.querySelectorAll(".message");
+      for (let ei = 0; ei < existingMessages.length; ei++) observeMessage(existingMessages[ei]);
 
       new MutationObserver((mutations) => {
         if (!settings.customizations) return;

@@ -1,4 +1,4 @@
-const { BrowserWindow, ipcMain, app, shell, clipboard, dialog, net, session, protocol } = require("electron");
+const { BrowserWindow, ipcMain, app, shell, clipboard, dialog, net, session, protocol, powerSaveBlocker } = require("electron");
 const { default_settings, allowed_urls } = require("../util/defaults.json");
 const { initResourceSwapper } = require('../addons/swapper.js');
 const { registerShortcuts } = require("../util/shortcuts");
@@ -342,6 +342,9 @@ ipcMain.on("navigate", (_, url) => {
 });
 
 applySwitches(settings);
+
+// Prevent macOS from entering power-saving states during gameplay
+const psbId = powerSaveBlocker.start('prevent-display-sleep');
 
 let gameWindow = null;
 
