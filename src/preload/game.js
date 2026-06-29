@@ -88,7 +88,7 @@ const flushStyles = () => {
   styleQueue.length = 0;
   for (let i = 0; i < fns.length; i++) {
     __juicePerf.inc("queueStyleWrite");
-    fns[i]();
+    try { fns[i](); } catch (e) { originalConsole.error('flushStyles:', e); }
   }
 };
 const queueStyleWrite = (fn) => {
