@@ -349,11 +349,12 @@ const createWindow = () => {
   gameWindow = new BrowserWindow({
     fullscreen: process.platform !== "darwin" && settings.auto_fullscreen,
     icon: path.join(__dirname, "../assets/img/icon.ico"),
-    title: "Dawn Client",
+    title: "macos client",
     width: 1280,
     height: 720,
     show: false,
     backgroundColor: "#141414",
+    backgroundThrottling: false,
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false,
@@ -364,14 +365,14 @@ const createWindow = () => {
     },
   });
 
-  if (process.platform === "darwin" && settings.auto_fullscreen) {
+  if (process.platform === "darwin") {
     gameWindow.once("ready-to-show", () => {
       gameWindow.setFullScreen(true);
     });
   }
 
   gameWindow.webContents.setUserAgent(
-    `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.7204.296 Safari/537.36 Electron/10.4.7 DawnClient/${app.getVersion()}`
+    `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.7204.296 Safari/537.36 Electron/10.4.7 macosclient/${app.getVersion()}`
   );
 
   const scriptsPath = path.join(

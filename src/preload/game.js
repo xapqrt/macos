@@ -32,6 +32,67 @@ if (!window.location.href.startsWith(base_url)) {
   });
 }
 
+// Defer DOM-dependent setup until head is available
+const domReady = (fn) => {
+  if (document.head) { fn(); return; }
+  const check = () => { if (document.head) { fn(); return; } requestAnimationFrame(check); };
+  requestAnimationFrame(check);
+};
+
+domReady(() => {
+  // GPU compositing + performance CSS rules
+  const perfStyle = document.createElement("style");
+  perfStyle.id = "juice-perf";
+  perfStyle.textContent = `
+    #game { transform: translateZ(0); will-change: transform; }
+    canvas { transform: translateZ(0); }
+    .desktop-game-interface { will-change: transform, opacity; contain: layout style; }
+    .menu { will-change: transform; contain: layout style paint; }
+    .kill-feed, .kill-feed * { contain: paint; }
+  `;
+  document.head.appendChild(perfStyle);
+
+  // Pause cosmetic animations during active gameplay
+  const animPauseStyle = document.createElement("style");
+  animPauseStyle.id = "juice-anim-pause";
+  document.head.appendChild(animPauseStyle);
+
+  document.addEventListener("pointerlockchange", () => {
+    if (document.pointerLockElement) {
+      animPauseStyle.textContent = `[style*="animated-gradient"] { animation-play-state: paused !important; }`;
+    } else {
+      animPauseStyle.textContent = "";
+    }
+  });
+
+  // Preconnect & DNS prefetch for external resources
+  const preconnectDomains = [
+    "https://raw.githubusercontent.com",
+    "https://juice.irrvlo.xyz",
+    "https://api.kirka.io",
+  ];
+  for (const domain of preconnectDomains) {
+    const link = document.createElement("link");
+    link.rel = "preconnect";
+    link.href = domain;
+    link.crossOrigin = "anonymous";
+    document.head.appendChild(link);
+  }
+});
+
+const styleQueue = [];
+let styleRaf = null;
+const flushStyles = () => {
+  styleRaf = null;
+  const fns = styleQueue.slice();
+  styleQueue.length = 0;
+  for (let i = 0; i < fns.length; i++) fns[i]();
+};
+const queueStyleWrite = (fn) => {
+  styleQueue.push(fn);
+  if (!styleRaf) styleRaf = requestAnimationFrame(flushStyles);
+};
+
 const observeForElement = (selector, functionToRun, target = document.body) => {
   const observer = new MutationObserver((mutations, obs) => {
     for (const mutation of mutations) {
@@ -39,10 +100,10 @@ const observeForElement = (selector, functionToRun, target = document.body) => {
         mutation.addedNodes.forEach(node => {
           if (node.nodeType === Node.ELEMENT_NODE) {
             if (node.matches(selector)) {
-              functionToRun(node);
+              queueStyleWrite(() => functionToRun(node));
             } else {
               const inner = node.querySelector(selector);
-              if (inner) functionToRun(inner);
+              if (inner) queueStyleWrite(() => functionToRun(inner));
             }
           }
         });
@@ -76,19 +137,27 @@ window.addEventListener("DOMContentLoaded", async () => {
   editResourceSwapper();
   initGallery();
 
-  const fetchAll = async () => {
-    const [customizations, clan, weapons] = await Promise.all([
-      fetch(
-        "https://raw.githubusercontent.com/zVipexx/dawn-client/refs/heads/main/badges.json"
-      ).then((r) => r.json()),
-      fetch(
-        "https://raw.githubusercontent.com/zVipexx/dawn-client/refs/heads/main/clans.json"
-      ).then((r) => r.json()),
-    ])
+  const cachedFetch = async (cacheKey, url, ttlMs = 3600000) => {
+    const tsKey = cacheKey + "_ts";
+    const cached = localStorage.getItem(cacheKey);
+    const timestamp = localStorage.getItem(tsKey);
+    if (cached && timestamp && Date.now() - Number(timestamp) < ttlMs) {
+      return JSON.parse(cached);
+    }
+    const data = await fetch(url).then(r => r.json());
+    localStorage.setItem(cacheKey, JSON.stringify(data));
+    localStorage.setItem(tsKey, String(Date.now()));
+    return data;
+  };
 
-    localStorage.setItem("juice-customizations", JSON.stringify(customizations))
-    localStorage.setItem("juice-clans", JSON.stringify(clan))
-  }
+  const fetchAll = async () => {
+    await Promise.all([
+      cachedFetch("juice-customizations",
+        "https://raw.githubusercontent.com/zVipexx/dawn-client/refs/heads/main/badges.json"),
+      cachedFetch("juice-clans",
+        "https://raw.githubusercontent.com/zVipexx/dawn-client/refs/heads/main/clans.json"),
+    ]);
+  };
   fetchAll();
 
   const formatLink = (link) => link.replace(/\\/g, "/");
@@ -120,9 +189,8 @@ window.addEventListener("DOMContentLoaded", async () => {
     if (!general_news && !promotional_news && !event_news && !alert_news)
       return;
 
-    let news = await fetch(
-      "https://raw.githubusercontent.com/zVipexx/dawn-client/refs/heads/main/news.json"
-    ).then((r) => r.json());
+    let news = await cachedFetch("juice-news",
+      "https://raw.githubusercontent.com/zVipexx/dawn-client/refs/heads/main/news.json");
     if (!news.length) return;
 
     news = news.filter(({ category }) => {
@@ -296,9 +364,11 @@ window.addEventListener("DOMContentLoaded", async () => {
 
     btn.replaceWith(discordBtn);
 
-    setInterval(() => {
-      discordBtn.className = "card-cont soc-group";
-    }, 300);
+    new MutationObserver(() => {
+      if (discordBtn.className !== "card-cont soc-group") {
+        discordBtn.className = "card-cont soc-group";
+      }
+    }).observe(discordBtn, { attributes: true, attributeFilter: ["class"] });
   };
 
   const initRoomPresets = () => {
@@ -720,7 +790,6 @@ window.addEventListener("DOMContentLoaded", async () => {
     document.head.appendChild(customStyles);
 
     window.updateTheme = () => {
-      const settings = ipcRenderer.sendSync("get-settings");
       const cssLink = settings.css_link;
       const advancedCSS = settings.advanced_css;
 
@@ -742,7 +811,6 @@ window.addEventListener("DOMContentLoaded", async () => {
     document.head.appendChild(addedStyles);
 
     const updateUIFeatures = () => {
-      const settings = ipcRenderer.sendSync("get-settings");
       const styles = [];
 
       if (settings.perm_tablist)
@@ -823,7 +891,7 @@ window.addEventListener("DOMContentLoaded", async () => {
         );
       if (settings.rave_mode)
         styles.push(
-          "canvas { animation: rotateHue 1s linear infinite !important; }"
+          ".interface { animation: rotateHue 1s linear infinite !important; }"
         );
       if (!settings.lobby_keybind_reminder)
         styles.push("#juice-keybind-reminder { display: none; }");
@@ -881,69 +949,86 @@ window.addEventListener("DOMContentLoaded", async () => {
   }
 
   window.ads_power = 1;
+  const patchCameraFov = (cam) => {
+    const fovKey = Object.getOwnPropertyNames(cam).find(key => {
+      const desc = Object.getOwnPropertyDescriptor(cam, key);
+      if (!desc?.get) return false;
+      try {
+        const val = desc.get.call(cam);
+        return typeof val === "number" && val >= 40 && val <= 150;
+      } catch (e) { return false; }
+    });
+
+    if (!fovKey) return;
+
+    const desc = Object.getOwnPropertyDescriptor(cam, fovKey);
+    const origGet = desc.get;
+    const origSet = desc.set;
+
+    const defaultFov = parseFloat(localStorage.getItem("SETTINGS___SETTING/CAMERA___SETTING/MAIN_FOV___SETTING")?.replace(/"/g, "")) || 100;
+
+    let ads = false;
+
+    Object.defineProperty(cam, fovKey, {
+      get() { return origGet.call(this); },
+      set(v) {
+        if (v === defaultFov) {
+          ads = false;
+          origSet.call(this, v);
+          return;
+        }
+
+        if (v < defaultFov) {
+          ads = true;
+        }
+
+        if (ads) {
+          const weaponConfig = window.dawnWeaponConfig;
+          let adsPower = window.ads_power;
+
+          if (weaponConfig) {
+            const weaponId = weaponConfig.universalModeActive ? "universal" : (window.currentWeaponId || "vita");
+            const settings = weaponConfig.getSettings(weaponId);
+            adsPower = settings.adsPower ?? window.ads_power;
+          }
+
+          const zoomDelta = Math.abs(defaultFov - v);
+          const curved = Math.pow(adsPower, 0.4);
+          const newFov = defaultFov - zoomDelta * curved;
+          origSet.call(this, Math.max(1, Math.min(179, newFov)));
+        } else {
+          origSet.call(this, v);
+        }
+      },
+      configurable: true,
+      enumerable: true
+    });
+  };
+
+  const applyAds = () => {
+    const cam = findCamera(window.__zoomInstance);
+    if (!cam) return;
+    patchCameraFov(cam);
+  };
+
   const setAdsPower = (multiplier) => {
     window.ads_power = multiplier;
 
-    const interval = setInterval(() => {
-      if (!window.__zoomInstance) return;
-      const cam = findCamera(window.__zoomInstance);
-      if (!cam) return;
-      clearInterval(interval);
+    if (window.__zoomInstance) {
+      applyAds();
+      return;
+    }
 
-      const fovKey = Object.getOwnPropertyNames(cam).find(key => {
-        const desc = Object.getOwnPropertyDescriptor(cam, key);
-        if (!desc?.get) return false;
-        try {
-          const val = desc.get.call(cam);
-          return typeof val === "number" && val >= 40 && val <= 150;
-        } catch (e) { return false; }
-      });
-
-      if (!fovKey) return;
-
-      const desc = Object.getOwnPropertyDescriptor(cam, fovKey);
-      const origGet = desc.get;
-      const origSet = desc.set;
-
-      const defaultFov = parseFloat(localStorage.getItem("SETTINGS___SETTING/CAMERA___SETTING/MAIN_FOV___SETTING")?.replace(/"/g, "")) || 100;
-
-      let ads = false;
-
-      Object.defineProperty(cam, fovKey, {
-        get() { return origGet.call(this); },
-        set(v) {
-          if (v === defaultFov) {
-            ads = false;
-            origSet.call(this, v);
-            return;
-          }
-
-          if (v < defaultFov) {
-            ads = true;
-          }
-
-          if (ads) {
-            const weaponConfig = window.dawnWeaponConfig;
-            let adsPower = window.ads_power;
-
-            if (weaponConfig) {
-              const weaponId = weaponConfig.universalModeActive ? "universal" : (window.currentWeaponId || "vita");
-              const settings = weaponConfig.getSettings(weaponId);
-              adsPower = settings.adsPower ?? window.ads_power;
-            }
-
-            const zoomDelta = Math.abs(defaultFov - v);
-            const curved = Math.pow(adsPower, 0.4);
-            const newFov = defaultFov - zoomDelta * curved;
-            origSet.call(this, Math.max(1, Math.min(179, newFov)));
-          } else {
-            origSet.call(this, v);
-          }
-        },
-        configurable: true,
-        enumerable: true
-      });
-    }, 100);
+    let _zVal = undefined;
+    Object.defineProperty(window, '__zoomInstance', {
+      get() { return _zVal; },
+      set(v) {
+        _zVal = v;
+        applyAds();
+      },
+      configurable: true,
+      enumerable: true,
+    });
   };
 
   const initWeaponMods = () => {
@@ -1602,115 +1687,129 @@ window.addEventListener("DOMContentLoaded", async () => {
     const armKeyframes_knife = armKeyframes_disabled;
     const armKeyframes_tomahawk = armKeyframes_disabled;
 
-    const sigToWeaponId = {
-      "0.11,0.11,0.11": "vita",
-      "0.59,0.89,0.60": "scar",
-      "0.17,0.17,0.17": "rev",
-      "0.73,0.64,0.73": "ar9",
-      "0.77,0.77,0.77": "mac10",
-      "0.11,0.10,0.10": "m60",
-      "0.84,0.84,0.84": "weatie",
-      "0.77,1.01,0.77": "lar",
-      "0.01,0.01,0.01": "shark",
-      "1.27,1.05,1.62": "bayonet",
-      "1.45,1.26,1.29": "bayonet",
-      "1.46,1.25,1.28": "bayonet",
-      "1.48,1.24,1.28": "bayonet",
-      "1.48,1.24,1.27": "bayonet",
-      "1.49,1.23,1.27": "bayonet",
-      "1.49,1.23,1.28": "bayonet",
-      "1.47,1.23,1.29": "bayonet",
-      "1.46,1.23,1.32": "bayonet",
-      "1.43,1.23,1.34": "bayonet",
-      "1.39,1.24,1.38": "bayonet",
-      "1.35,1.25,1.41": "bayonet",
-      "1.31,1.26,1.43": "bayonet",
-      "1.28,1.27,1.45": "bayonet",
-      "1.26,1.28,1.46": "bayonet",
-      "1.27,1.29,1.44": "bayonet",
-      "1.29,1.31,1.41": "bayonet",
-      "1.33,1.31,1.37": "bayonet",
-      "1.37,1.32,1.32": "bayonet",
-      "1.41,1.32,1.28": "bayonet",
-      "1.42,1.31,1.27": "bayonet",
-      "1.41,1.29,1.30": "bayonet",
-      "1.38,1.27,1.36": "bayonet",
-      "1.33,1.24,1.43": "bayonet",
-      "1.29,1.21,1.50": "bayonet",
-      "1.27,1.17,1.54": "bayonet",
-      "1.29,1.14,1.55": "bayonet",
-      "1.35,1.11,1.52": "bayonet",
-      "1.44,1.08,1.45": "bayonet",
-      "1.54,1.06,1.37": "bayonet",
-      "1.60,1.05,1.30": "bayonet",
-      "1.62,1.05,1.27": "bayonet",
-      "1.59,1.05,1.31": "bayonet",
-      "1.51,1.05,1.40": "bayonet",
-      "1.41,1.05,1.50": "bayonet",
-      "1.54,0.92,2.24": "tomahawk"
+    const sigToWeaponNumId = {
+      11011011: "vita",
+      59089060: "scar",
+      17017017: "rev",
+      73064073: "ar9",
+      77077077: "mac10",
+      11010010: "m60",
+      84084084: "weatie",
+      77101077: "lar",
+      1001001: "shark",
+      127105162: "bayonet",
+      145126129: "bayonet",
+      146125128: "bayonet",
+      148124128: "bayonet",
+      148124127: "bayonet",
+      149123127: "bayonet",
+      149123128: "bayonet",
+      147123129: "bayonet",
+      146123132: "bayonet",
+      143123134: "bayonet",
+      139124138: "bayonet",
+      135125141: "bayonet",
+      131126143: "bayonet",
+      128127145: "bayonet",
+      126128146: "bayonet",
+      127129144: "bayonet",
+      129131141: "bayonet",
+      133131137: "bayonet",
+      137132132: "bayonet",
+      141132128: "bayonet",
+      142131127: "bayonet",
+      141129130: "bayonet",
+      138127136: "bayonet",
+      133124143: "bayonet",
+      129121150: "bayonet",
+      127117154: "bayonet",
+      129114155: "bayonet",
+      135111152: "bayonet",
+      144108145: "bayonet",
+      154106137: "bayonet",
+      160105130: "bayonet",
+      162105127: "bayonet",
+      159105131: "bayonet",
+      151105140: "bayonet",
+      141105150: "bayonet",
+      154092224: "tomahawk",
     };
 
-    const weaponKeyframeMap = {
-      "0.11,0.11,0.11": inspectKeyframes_vita,
-      "0.17,0.17,0.17": inspectKeyframes_rev,
-      "0.77,0.77,0.77": inspectKeyframes_mac10,
-      "0.73,0.64,0.73": inspectKeyframes_ar9,
-      "0.11,0.10,0.10": inspectKeyframes_m60,
-      "0.84,0.84,0.84": inspectKeyframes_vita,
-      "0.77,1.01,0.77": inspectKeyframes_lar,
-      "0.59,0.89,0.60": inspectKeyframes_scar,
-      "0.01,0.01,0.01": inspectKeyframes_shark,
-      "1.27,1.05,1.62": inspectKeyframes_knife,
-      "1.45,1.26,1.29": inspectKeyframes_knife,
-      "1.46,1.25,1.28": inspectKeyframes_knife,
-      "1.48,1.24,1.28": inspectKeyframes_knife,
-      "1.48,1.24,1.27": inspectKeyframes_knife,
-      "1.49,1.23,1.27": inspectKeyframes_knife,
-      "1.49,1.23,1.28": inspectKeyframes_knife,
-      "1.47,1.23,1.29": inspectKeyframes_knife,
-      "1.46,1.23,1.32": inspectKeyframes_knife,
-      "1.43,1.23,1.34": inspectKeyframes_knife,
-      "1.39,1.24,1.38": inspectKeyframes_knife,
-      "1.35,1.25,1.41": inspectKeyframes_knife,
-      "1.31,1.26,1.43": inspectKeyframes_knife,
-      "1.28,1.27,1.45": inspectKeyframes_knife,
-      "1.26,1.28,1.46": inspectKeyframes_knife,
-      "1.27,1.29,1.44": inspectKeyframes_knife,
-      "1.29,1.31,1.41": inspectKeyframes_knife,
-      "1.33,1.31,1.37": inspectKeyframes_knife,
-      "1.37,1.32,1.32": inspectKeyframes_knife,
-      "1.41,1.32,1.28": inspectKeyframes_knife,
-      "1.42,1.31,1.27": inspectKeyframes_knife,
-      "1.41,1.29,1.30": inspectKeyframes_knife,
-      "1.38,1.27,1.36": inspectKeyframes_knife,
-      "1.33,1.24,1.43": inspectKeyframes_knife,
-      "1.29,1.21,1.50": inspectKeyframes_knife,
-      "1.27,1.17,1.54": inspectKeyframes_knife,
-      "1.29,1.14,1.55": inspectKeyframes_knife,
-      "1.35,1.11,1.52": inspectKeyframes_knife,
-      "1.44,1.08,1.45": inspectKeyframes_knife,
-      "1.54,1.06,1.37": inspectKeyframes_knife,
-      "1.60,1.05,1.30": inspectKeyframes_knife,
-      "1.62,1.05,1.27": inspectKeyframes_knife,
-      "1.59,1.05,1.31": inspectKeyframes_knife,
-      "1.51,1.05,1.40": inspectKeyframes_knife,
-      "1.41,1.05,1.50": inspectKeyframes_knife,
-      "1.54,0.92,2.24": inspectKeyframes_tomahawk,
+    const weaponKeyframeNumMap = {
+      11011011: inspectKeyframes_vita,
+      17017017: inspectKeyframes_rev,
+      77077077: inspectKeyframes_mac10,
+      73064073: inspectKeyframes_ar9,
+      11010010: inspectKeyframes_m60,
+      84084084: inspectKeyframes_vita,
+      77101077: inspectKeyframes_lar,
+      59089060: inspectKeyframes_scar,
+      1001001: inspectKeyframes_shark,
+      127105162: inspectKeyframes_knife,
+      145126129: inspectKeyframes_knife,
+      146125128: inspectKeyframes_knife,
+      148124128: inspectKeyframes_knife,
+      148124127: inspectKeyframes_knife,
+      149123127: inspectKeyframes_knife,
+      149123128: inspectKeyframes_knife,
+      147123129: inspectKeyframes_knife,
+      146123132: inspectKeyframes_knife,
+      143123134: inspectKeyframes_knife,
+      139124138: inspectKeyframes_knife,
+      135125141: inspectKeyframes_knife,
+      131126143: inspectKeyframes_knife,
+      128127145: inspectKeyframes_knife,
+      126128146: inspectKeyframes_knife,
+      127129144: inspectKeyframes_knife,
+      129131141: inspectKeyframes_knife,
+      133131137: inspectKeyframes_knife,
+      137132132: inspectKeyframes_knife,
+      141132128: inspectKeyframes_knife,
+      142131127: inspectKeyframes_knife,
+      141129130: inspectKeyframes_knife,
+      138127136: inspectKeyframes_knife,
+      133124143: inspectKeyframes_knife,
+      129121150: inspectKeyframes_knife,
+      127117154: inspectKeyframes_knife,
+      129114155: inspectKeyframes_knife,
+      135111152: inspectKeyframes_knife,
+      144108145: inspectKeyframes_knife,
+      154106137: inspectKeyframes_knife,
+      160105130: inspectKeyframes_knife,
+      162105127: inspectKeyframes_knife,
+      159105131: inspectKeyframes_knife,
+      151105140: inspectKeyframes_knife,
+      141105150: inspectKeyframes_knife,
+      154092224: inspectKeyframes_tomahawk,
     };
 
-    const armSigs = new Set([
-      "1.40,1.40,1.40",
-      "1.99,1.68,2.11",
-      "1.88,1.40,1.88",
-      "1.11,1.11,1.77",
-      "1.50,1.40,1.76",
-      "1.13,0.85,1.77",
-      "0.81,1.08,1.38",
-      "1.52,1.15,1.61",
-      "1.16,1.48,0.94",
-      "1.08,1.10,1.77",
-      "1.54,0.92,2.24",
+    const armSigsNum = new Set([
+      140140140,
+      199168211,
+      188140188,
+      111111177,
+      150140176,
+      113085177,
+      81108138,
+      152115161,
+      116148094,
+      108110177,
+      154092224,
     ]);
+
+    const armSigToTypeNum = {
+      140140140: "right",
+      199168211: "left",
+      111111177: "right",
+      150140176: "right",
+      113085177: "left",
+      81108138: "left",
+      152115161: "right",
+      116148094: "right",
+      108110177: "left",
+      188140188: "left",
+      154092224: "right",
+    };
 
     const armKeyframeMap = {
       vita_right: armKeyframes_vita_right,
@@ -1785,7 +1884,7 @@ window.addEventListener("DOMContentLoaded", async () => {
       if (inputName === currentInspectKeybind) {
         if (document.querySelector(".chat input[type='text']:focus")) return;
         inspectStart = performance.now();
-        inspectingWeaponId = sigToWeaponId[latchedWeaponSig] || null;
+        inspectingWeaponId = sigToWeaponNumId[latchedWeaponSig] || null;
         e.preventDefault();
       }
     };
@@ -1826,6 +1925,12 @@ window.addEventListener("DOMContentLoaded", async () => {
       if (!ctx || (type !== "webgl" && type !== "webgl2")) return ctx;
       if (hookedContexts.has(ctx) || this.id !== "game") return ctx;
       hookedContexts.add(ctx);
+
+      const canvas = this;
+      canvas.addEventListener("webglcontextlost", (e) => {
+        e.preventDefault();
+        hookedContexts.delete(ctx);
+      }, false);
 
       const gl = ctx;
       const matBuf = new Float32Array(16);
@@ -1887,26 +1992,26 @@ window.addEventListener("DOMContentLoaded", async () => {
             return origUniformMatrix4fv(location, transpose, data, srcOffset, srcLength);
           }
 
-          const s0 = colMag(slice, 0), s1 = colMag(slice, 4), s2 = colMag(slice, 8);
-          const sig = `${s0.toFixed(2)},${s1.toFixed(2)},${s2.toFixed(2)}`;
+          const s0 = Math.round(colMag(slice, 0) * 100), s1 = Math.round(colMag(slice, 4) * 100), s2 = Math.round(colMag(slice, 8) * 100);
+          const sigNum = s0 * 1000000 + s1 * 1000 + s2;
 
-          if (sig in weaponKeyframeMap) {
-            if (lastClearMask !== 256) {
+          if (lastClearMask !== 256) {
+            return origUniformMatrix4fv(location, transpose, data, srcOffset, srcLength);
+          }
+
+          if (weaponKeyframeNumMap[sigNum] !== undefined) {
+            const fpNum = (Math.round(slice[0] * 1000) * 1000000000000) + (Math.round(slice[5] * 1000) * 1000000000) + (Math.round(slice[10] * 1000) * 1000000) + (Math.round(slice[12] * 10000) * 100) + Math.round(slice[14] * 10000);
+            if (seenMatricesThisFrame.has(fpNum)) {
               return origUniformMatrix4fv(location, transpose, data, srcOffset, srcLength);
             }
+            seenMatricesThisFrame.add(fpNum);
 
-            const fp = `${slice[0].toFixed(3)},${slice[5].toFixed(3)},${slice[10].toFixed(3)},${slice[12].toFixed(4)},${slice[13].toFixed(4)},${slice[14].toFixed(4)}`;
-            if (seenMatricesThisFrame.has(fp)) {
-              return origUniformMatrix4fv(location, transpose, data, srcOffset, srcLength);
-            }
-            seenMatricesThisFrame.add(fp);
-
-            if (sigToWeaponId[sig]) {
-              currentFrameWeaponSig = sig;
-              window.currentWeaponId = sigToWeaponId[sig];
+            if (sigToWeaponNumId[sigNum]) {
+              currentFrameWeaponSig = sigNum;
+              window.currentWeaponId = sigToWeaponNumId[sigNum];
             }
 
-            const currentWeaponId = sigToWeaponId[latchedWeaponSig] || "vita";
+            const currentWeaponId = sigToWeaponNumId[latchedWeaponSig] || "vita";
 
             if (inspectStart !== null && inspectingWeaponId !== null && inspectingWeaponId !== currentWeaponId) {
               inspectStart = null;
@@ -1939,11 +2044,11 @@ window.addEventListener("DOMContentLoaded", async () => {
               origBindTexture(gl.TEXTURE_2D, lastBoundTexture);
             }
 
-            if (sigToWeaponId[sig] && sig !== latchedWeaponSig) {
-              latchedWeaponSig = sig;
+            if (sigToWeaponNumId[sigNum] && sigNum !== latchedWeaponSig) {
+              latchedWeaponSig = sigNum;
             }
-            if (sig !== settlerSig) {
-              settlerSig = sig;
+            if (sigNum !== settlerSig) {
+              settlerSig = sigNum;
               settlerSince = now;
             }
 
@@ -1963,8 +2068,8 @@ window.addEventListener("DOMContentLoaded", async () => {
             }
 
             if (inspectStart !== null && inspectingWeaponId === currentWeaponId) {
-              const animFn = weaponKeyframeMap[sig];
-              const weaponId = sigToWeaponId[sig] || currentWeaponId;
+              const animFn = weaponKeyframeNumMap[sigNum];
+              const weaponId = sigToWeaponNumId[sigNum] || currentWeaponId;
               const inspectDuration = INSPECT_DURATIONS[weaponId] ?? 1000;
               if (animFn) {
                 const elapsed = now - inspectStart;
@@ -2004,34 +2109,16 @@ window.addEventListener("DOMContentLoaded", async () => {
             return origUniformMatrix4fv(location, transpose, matBuf, 0, 16);
           }
 
-          if (armSigs.has(sig)) {
-            if (lastClearMask !== 256) {
+          if (armSigsNum.has(sigNum)) {
+            const fpNum = (Math.round(slice[0] * 1000) * 1000000000000) + (Math.round(slice[5] * 1000) * 1000000000) + (Math.round(slice[10] * 1000) * 1000000) + (Math.round(slice[12] * 10000) * 100) + Math.round(slice[14] * 10000);
+            if (seenMatricesThisFrame.has(fpNum)) {
               return origUniformMatrix4fv(location, transpose, data, srcOffset, srcLength);
             }
+            seenMatricesThisFrame.add(fpNum);
 
-            const fp = `${slice[0].toFixed(3)},${slice[5].toFixed(3)},${slice[10].toFixed(3)},${slice[12].toFixed(4)},${slice[13].toFixed(4)},${slice[14].toFixed(4)}`;
-            if (seenMatricesThisFrame.has(fp)) {
-              return origUniformMatrix4fv(location, transpose, data, srcOffset, srcLength);
-            }
-            seenMatricesThisFrame.add(fp);
+            const currentWeaponId = sigToWeaponNumId[currentFrameWeaponSig] || sigToWeaponNumId[latchedWeaponSig] || "vita";
 
-            const currentWeaponId = sigToWeaponId[currentFrameWeaponSig] || sigToWeaponId[latchedWeaponSig] || "vita";
-
-            const armSigToType = {
-              "1.40,1.40,1.40": "right",
-              "1.99,1.68,2.11": "left",
-              "1.11,1.11,1.77": "right",
-              "1.50,1.40,1.76": "right",
-              "1.13,0.85,1.77": "left",
-              "0.81,1.08,1.38": "left",
-              "1.52,1.15,1.61": "right",
-              "1.16,1.48,0.94": "right",
-              "1.54,0.92,2.24": "right",
-              "1.08,1.10,1.77": "left",
-              "1.88,1.40,1.88": "left"
-            };
-
-            let armType = armSigToType[sig] || "left";
+            let armType = armSigToTypeNum[sigNum] || "left";
 
             if (armType === null) {
               return origUniformMatrix4fv(location, transpose, data, srcOffset, srcLength);
@@ -2140,8 +2227,6 @@ window.addEventListener("DOMContentLoaded", async () => {
 
     initRoomPresets();
     const applyLobbyChanges = () => {
-      const settings = ipcRenderer.sendSync("get-settings");
-
       lobbyKeybindReminder(settings);
       lobbyNews(settings);
       juiceDiscordButton();
@@ -2182,7 +2267,7 @@ window.addEventListener("DOMContentLoaded", async () => {
           lobbyNickname.style.gap = "0.25rem";
           lobbyNickname.style.overflow = "unset !important";
 
-          if (ipcRenderer.sendSync("get-settings").animations) window.applyGradientAnimation(lobbyNickname, customs);
+          if (settings.animations) window.applyGradientAnimation(lobbyNickname, customs);
         } else {
           lobbyNickname.style = "display: flex; align-items: flex-end; gap: 0.25rem; overflow: unset !important;";
         }
@@ -2246,7 +2331,7 @@ window.addEventListener("DOMContentLoaded", async () => {
           clan.style.fontWeight = "700";
           clan.style.textShadow = customs.gradient.shadow || "0 0 0 transparent";
 
-          if (ipcRenderer.sendSync("get-settings").animations) window.applyGradientAnimation(clan, customs);
+          if (settings.animations) window.applyGradientAnimation(clan, customs);
         }
       };
 
@@ -2334,53 +2419,28 @@ window.addEventListener("DOMContentLoaded", async () => {
         });
       };
 
-      const interval = setInterval(() => {
+      const lobbyInitObserver = new MutationObserver(() => {
         const moneys = document.querySelectorAll(".moneys > .card-cont");
         const expValues = document.querySelector(".exp-values");
-        const quests = document.querySelectorAll(
-          ".right-interface > .quests .quest"
-        );
-        const questsTabs = document.querySelector(
-          ".right-interface > .quests .tabs"
-        );
+        const quests = document.querySelectorAll(".right-interface > .quests .quest");
+        const questsTabs = document.querySelector(".right-interface > .quests .tabs");
+        const profile = document.querySelector(".avatar-info .username");
+
+        if (profile) applyLobbyChanges();
 
         if (moneys.length && expValues && quests.length && questsTabs) {
-          clearInterval(interval);
           moneys.forEach(formatMoney);
           formatExpValues(expValues);
           formatQuests();
-
           questsTabs.addEventListener("click", formatQuests);
+          lobbyInitObserver.disconnect();
         }
-      }, 100);
+      });
+      lobbyInitObserver.observe(document.body, { childList: true, subtree: true });
     };
-
-    let loading = null;
-    let polling = null;
-
-    const run = () => {
-      clearTimeout(loading);
-      clearTimeout(polling);
-
-      loading = setTimeout(() => {
-        const tryApply = () => {
-          const profile = document.querySelector(".avatar-info .username");
-          if (profile) {
-            applyLobbyChanges();
-          } else {
-            polling = setTimeout(tryApply, 10);
-          }
-        };
-        tryApply();
-      }, 0);
-    };
-
-    run();
   };
 
   const handleServers = async () => {
-    const settings = ipcRenderer.sendSync("get-settings");
-
     const mapImages = await fetch(
       "https://raw.githubusercontent.com/AwesomeSam9523/KirkaSkins/refs/heads/main/maps/full_mapimages.json"
     ).then((res) => res.json());
@@ -2391,21 +2451,29 @@ window.addEventListener("DOMContentLoaded", async () => {
       }
     }
 
-    const replaceMapImages = () => {
-      if (!settings.map_backgrounds) return;
-      const servers = document.querySelectorAll(".server");
-      for (const server of servers) {
-        const mapEl = server.querySelector(".map");
-        if (!mapEl) continue;
-        const mapName = mapEl.textContent?.split("_").pop() || "";
-        if (mapImages[mapName]) {
-          server.style.backgroundImage = `url(${mapImages[mapName]})`;
-          server.style.backgroundSize = "cover";
-          server.style.backgroundPosition = "center";
-        } else {
-          server.style.backgroundImage = "none";
+    const mapImageObserver = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        if (entry.isIntersecting) {
+          const server = entry.target;
+          const mapName = server.querySelector(".map")?.textContent?.split("_").pop() || "";
+          if (mapImages[mapName]) {
+            server.style.backgroundImage = `url(${mapImages[mapName]})`;
+            server.style.backgroundSize = "cover";
+            server.style.backgroundPosition = "center";
+          } else {
+            server.style.backgroundImage = "none";
+          }
+          mapImageObserver.unobserve(server);
         }
       }
+    }, { rootMargin: "200px" });
+
+    const replaceMapImages = () => {
+      if (!settings.map_backgrounds) return;
+      document.querySelectorAll(".server:not([data-map-loaded])").forEach((server) => {
+        server.dataset.mapLoaded = "true";
+        mapImageObserver.observe(server);
+      });
     };
 
     replaceMapImages();
@@ -2644,7 +2712,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     };
 
     input.addEventListener("input", () => {
-      if (!ipcRenderer.sendSync("get-settings").command_abbreviations) return;
+      if (!settings.command_abbreviations) return;
       const text = input.value;
 
       const match = text.match(/^(\S*)(\s*)(\S*)(\s*)(.*)$/);
@@ -2653,12 +2721,12 @@ window.addEventListener("DOMContentLoaded", async () => {
       let [, cmd, space1, sub, space2, rest] = match;
       let changed = false;
 
-      if (commandMap[cmd] && (!(ipcRenderer.sendSync("get-settings").abbreviation_confirmation) || space1.length > 0)) {
+      if (commandMap[cmd] && (!(settings.abbreviation_confirmation) || space1.length > 0)) {
         cmd = commandMap[cmd];
         changed = true;
       }
 
-      if (subCommandMap[sub] && (!(ipcRenderer.sendSync("get-settings").abbreviation_confirmation) || space2.length > 0)) {
+      if (subCommandMap[sub] && (!(settings.abbreviation_confirmation) || space2.length > 0)) {
         sub = subCommandMap[sub];
         changed = true;
       }
@@ -2674,12 +2742,25 @@ window.addEventListener("DOMContentLoaded", async () => {
     });
   };
 
-  let disconnectObservers = () => { };
+  const activeObservers = [];
+
+  const disconnectAllObservers = () => {
+    for (const obs of activeObservers) {
+      try { obs.disconnect(); } catch (_) {}
+    }
+    activeObservers.length = 0;
+  };
+
+  const OriginalMO = window.MutationObserver;
+  window.MutationObserver = function(handler) {
+    const obs = new OriginalMO(handler);
+    activeObservers.push(obs);
+    return obs;
+  };
+  window.MutationObserver.prototype = OriginalMO.prototype;
 
   const handleProfile = () => {
-    disconnectObservers();
-
-    const settings = ipcRenderer.sendSync("get-settings");
+    disconnectAllObservers();
 
     const addNicknameButton = () => {
       const profile = document.querySelector(".tab-content > .profile-cont > .profile");
@@ -2974,42 +3055,41 @@ window.addEventListener("DOMContentLoaded", async () => {
     };
     self.applyCustomizations = applyCustomizations;
 
-    let loading = null;
-    let polling = null;
-
-    const run = () => {
-      clearTimeout(loading);
-      clearTimeout(polling);
-
-      loading = setTimeout(() => {
-        const tryApply = () => {
-          const profile = document.querySelector(".tab-content .statistics");
-          if (profile) {
-            const profileCont = document.querySelector(".tab-content > .profile-cont > .profile");
-            if (profileCont?.dataset.applied) return;
-            if (profileCont) profileCont.dataset.applied = "true";
-            addNicknameButton();
-            applyCustomizations();
-            applyCardChanges();
-          } else {
-            polling = setTimeout(tryApply, 10);
-          }
-        };
-        tryApply();
-      }, 0);
+    const applyProfile = () => {
+      const profile = document.querySelector(".tab-content .statistics");
+      if (!profile) return;
+      const profileCont = document.querySelector(".tab-content > .profile-cont > .profile");
+      if (profileCont?.dataset.applied) return;
+      if (profileCont) profileCont.dataset.applied = "true";
+      addNicknameButton();
+      applyCustomizations();
+      applyCardChanges();
     };
+
+    let profileApplied = false;
+    const run = () => {
+      if (profileApplied) return;
+      applyProfile();
+    };
+    const profileMut = observeForElement(".tab-content .statistics", () => {
+      profileApplied = true;
+      applyProfile();
+    });
 
     run();
 
-    const obs = observeForElement(".tab-content", run);
+    const obs = observeForElement(".tab-content", () => {
+      profileApplied = false;
+      applyProfile();
+    });
 
     disconnectObservers = () => {
       obs?.disconnect();
+      profileMut?.disconnect();
     }
   };
 
   const handleInGame = () => {
-    let settings = ipcRenderer.sendSync("get-settings");
     const nicknames = JSON.parse(localStorage.getItem("nicknames") || "{}");
 
     setAdsPower(settings.ads_power);
@@ -3365,8 +3445,9 @@ window.addEventListener("DOMContentLoaded", async () => {
       kd.innerHTML = `<span class="kd-ratio">0</span> <span class="text-kd" style="font-size: 0.75rem;">K/D</span>`;
 
       document.querySelector(".kill-death").insertBefore(kd, kills.parentElement.children[2]);
-      kills.addEventListener("DOMSubtreeModified", updateKD);
-      deaths.addEventListener("DOMSubtreeModified", updateKD);
+      const kdParent = document.querySelector(".kill-death");
+      const kdObserver = new MutationObserver(updateKD);
+      kdObserver.observe(kdParent, { childList: true, subtree: true, characterData: true });
     };
 
     let assistsCount = 0;
@@ -3999,28 +4080,31 @@ window.addEventListener("DOMContentLoaded", async () => {
       attachChatObserver();
       return;
     } else {
-      const warmupInterval = setInterval(() => {
-        if (!document.querySelector(".warmup-timer")) {
-          clearInterval(warmupInterval);
-          red_players = [];
-          blue_players = [];
-          updatePlayerLists();
-          updateMessages();
-          updateTeammates();
-          applyCustomizationsTab();
-          const observeElement = (selector, setting, execute) => {
-            const elem = document.querySelector(selector);
-            if (!elem) return;
-            new MutationObserver(() => {
-              if (setting()) execute();
-            }).observe(elem, { childList: true });
-          };
+      const findWarmupEnd = () => {
+        if (document.querySelector(".warmup-timer")) return;
+        red_players = [];
+        blue_players = [];
+        updatePlayerLists();
+        updateMessages();
+        updateTeammates();
+        applyCustomizationsTab();
+        const observeElement = (selector, setting, execute) => {
+          const elem = document.querySelector(selector);
+          if (!elem) return;
+          new MutationObserver(() => {
+            if (setting()) execute();
+          }).observe(elem, { childList: true });
+        };
 
-          observeElement(".kill-bar-cont", () => settings.colored_killfeed, updateKillFeed);
-          observeElement(".teammates-list", () => settings.customizations, updateTeammates);
-          attachChatObserver();
-        }
-      }, 1000);
+        observeElement(".kill-bar-cont", () => settings.colored_killfeed, updateKillFeed);
+        observeElement(".teammates-list", () => settings.customizations, updateTeammates);
+        attachChatObserver();
+        obs.disconnect();
+      };
+      const obs = new MutationObserver(findWarmupEnd);
+      obs.observe(document.body, { childList: true, subtree: true });
+      // fallback: check once after 15s in case no DOM mutation occurs
+      setTimeout(() => { if (obs) { findWarmupEnd(); obs.disconnect(); } }, 15000);
     }
   };
 
@@ -4324,52 +4408,33 @@ window.addEventListener("DOMContentLoaded", async () => {
     }
 
     observeForElement(".clans .my-clan .list-container", (el) => {
-      addSorting(el)
+      addSorting(el);
 
-      let loading = null;
-      let polling = null;
-
-      const run = () => {
-        clearTimeout(loading);
-        clearTimeout(polling);
-
-        loading = setTimeout(() => {
-          const tryApply = () => {
-            const clan = document.querySelector(".my-clan .clan-name");
-            if (clan) {
-              [
-                ".my-clan .stat",
-                ".my-clan .champions-values div",
-                ".my-clan .all-scores-value"
-              ].forEach(selector => {
-                document.querySelectorAll(selector).forEach(el => {
-                  const raw = parseInt(el.textContent.replace(/\D/g, ""));
-                  if (Number.isFinite(raw) && !isNaN(raw)) el.textContent = raw.toLocaleString();
-                });
-              });
-              applyClanCustomizations();
-            } else {
-              polling = setTimeout(tryApply, 10);
-            }
-          };
-          tryApply();
-        }, 0);
+      const applyClanStats = () => {
+        const clan = document.querySelector(".my-clan .clan-name");
+        if (!clan) return;
+        [
+          ".my-clan .stat",
+          ".my-clan .champions-values div",
+          ".my-clan .all-scores-value"
+        ].forEach(selector => {
+          document.querySelectorAll(selector).forEach(el => {
+            const raw = parseInt(el.textContent.replace(/\D/g, ""));
+            if (Number.isFinite(raw) && !isNaN(raw)) el.textContent = raw.toLocaleString();
+          });
+        });
+        applyClanCustomizations();
       };
-      run();
+
+      applyClanStats();
+      const clanMut = observeForElement(".my-clan .clan-name", applyClanStats);
     });
   }
 
   const handleMarket = () => {
-    const interval = setInterval(() => {
-      if (!window.location.href === `${base_url}hub/market`) {
-        clearInterval(interval);
-        return;
-      }
-    }, 250);
   };
 
   const handleFriends = () => {
-    const settings = ipcRenderer.sendSync("get-settings");
     const nicknames = JSON.parse(localStorage.getItem("nicknames") || "{}");
 
     if (window.copyGameLink) {
@@ -4492,21 +4557,19 @@ window.addEventListener("DOMContentLoaded", async () => {
       });
     }
 
-    const interval = setInterval(() => {
-      if (!window.location.href.startsWith(`${base_url}friends`)) {
-        clearInterval(interval);
-        return;
-      }
+    if (!addFriends.querySelector(".search-friends")) createSearch();
 
+    const friendsObserver = new MutationObserver(() => {
       document.querySelectorAll(".online").forEach((div) => {
         if (div.textContent.includes("in game"))
           addSpectateButton(div);
         else
           div.querySelector(".spectate-eye")?.remove();
       });
-
-      if (!addFriends.querySelector(".search-friends")) createSearch();
-    }, 250);
+    });
+    if (friendsCont) {
+      friendsObserver.observe(friendsCont, { childList: true, subtree: true });
+    }
 
     const applyCustomizations = () => {
       if (settings.customizations) {
@@ -4655,7 +4718,7 @@ window.addEventListener("DOMContentLoaded", async () => {
           subject.classList.add("favorite");
 
           subject.addEventListener("click", (e) => {
-            if (!ipcRenderer.sendSync("get-settings").prevent_selling_favorites) return;
+            if (!settings.prevent_selling_favorites) return;
             const sellBtn = e.target.closest(".sell-btn");
             if (sellBtn) {
               e.stopImmediatePropagation();
@@ -4826,6 +4889,8 @@ window.addEventListener("DOMContentLoaded", async () => {
   });
 
   ipcRenderer.on("url-change", (_, url) => {
+    disconnectAllObservers();
+
     console.log = originalConsole.log;
     console.warn = originalConsole.warn;
     console.error = originalConsole.error;
@@ -4850,6 +4915,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   });
 
   const handleInitialLoad = () => {
+    disconnectAllObservers();
     const url = window.location.href;
     if (url === `${base_url}`) {
       handleLobby();

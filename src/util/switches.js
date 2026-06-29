@@ -13,6 +13,15 @@ function applySwitches(settings) {
   app.commandLine.appendSwitch("ignore-gpu-blacklist");
   app.commandLine.appendSwitch("enable-gpu-rasterization");
   app.commandLine.appendSwitch("enable-zero-copy");
+
+  app.commandLine.appendSwitch("disable-software-rasterizer");
+  app.commandLine.appendSwitch("enable-native-gpu-memory-buffers");
+  app.commandLine.appendSwitch("enable-quic");
+  app.commandLine.appendSwitch("enable-tcp-fast-open");
+  app.commandLine.appendSwitch("disable-background-timer-throttling");
+  app.commandLine.appendSwitch("disable-renderer-backgrounding");
+  app.commandLine.appendSwitch("enable-features", "ParallelDownloading");
+
   app.allowRendererProcessReuse = true;
 }
 

@@ -1,30 +1,27 @@
 // from CarrySheriff!
 
 const customReqScripts = (settings) => {
-  const originalXHR = window.XMLHttpRequest;
   const { base_url, custom_list_price, market_names } = settings;
   let ids = [];
   let newprice;
   let updating = false;
 
-  window.XMLHttpRequest = function () {
-    const xhr = new originalXHR();
-    let requestUrl = "";
+  if (custom_list_price) {
+    const _origOpen = XMLHttpRequest.prototype.open;
+    const _origSend = XMLHttpRequest.prototype.send;
 
-    xhr.open = function (method, url, ...args) {
-      requestUrl = url;
-      originalXHR.prototype.open.apply(this, [method, url, ...args]);
+    XMLHttpRequest.prototype.open = function (method, url) {
+      this._dawnUrl = url;
+      return _origOpen.apply(this, arguments);
     };
 
-
-    xhr.send = function (data) {
+    XMLHttpRequest.prototype.send = function (data) {
       if (
-        requestUrl.includes(`api2.${base_url.replace("https://", "")}`) &&
+        this._dawnUrl?.includes(`api2.${base_url.replace("https://", "")}`) &&
         location.href === `${base_url}inventory` &&
         document.querySelector(".vm--container > .vm--modal > .wrapper-modal")?.id !== "sell-item-modal" &&
         data &&
-        newprice &&
-        custom_list_price
+        newprice
       ) {
         try {
           const json = JSON.parse(data);
@@ -38,11 +35,9 @@ const customReqScripts = (settings) => {
           data = JSON.stringify(json);
         } catch { }
       }
-      originalXHR.prototype.send.call(this, data);
+      return _origSend.call(this, data);
     };
-
-    return xhr;
-  };
+  }
 
   async function marketUsers() {
     const itemElements = document.getElementsByClassName("item-name");

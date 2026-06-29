@@ -449,9 +449,9 @@ function hexToRgb(hex) {
 }
 
 //Skywalks improved version:
-const oldIsArr = Array.isArray;
 const muzzleImg = "https://kirka.io/assets/img/__shooting-fire__.effa20af.png";
 const muzzleImg2 = "shooting-fire";
+const default_url_png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAAAXNSR0IArs4c6QAAANJJREFUeF7t2EEKBDEIBdF4/0M7MAeIi0HmQ15v022LaJWkTp8+l6frenz79HtWXeM7//x/KYAOMAIY8E8ITYTchjAIPm+BPv2b6KceDj8vBdABRgADwjm1mh4IPm+BaRFa7b+A4OMqHJDjagoKYASGG6HV/gsIbgSMgBG4X4oGjOlqChiAARiAAW9fiGAABmAABqyuWuHBbYIswAIswALhoF5NjwVYgAVYgAVWMRsenAVYgAVYgAXCQb2aHguwAAuwAAusYjY8OAuwAAuwwNMW+AByY7e5Jy8jiwAAAABJRU5ErkJggg==";
 
 let patchedImages = new WeakSet();
 
@@ -468,38 +468,31 @@ function getCurrentSkinUrl() {
   }
 
   if (!useurl || useurl === "") {
-    useurl = localStorage.csl_url || default_url;
+    useurl = localStorage.csl_url || default_url_png;
   }
 
   return useurl;
 }
 
-Array.isArray = function (...args) {
-  const arg = args[0];
-  if (!arg || !arg.map || !arg.map.image) {
-    return oldIsArr.apply(Array, args);
-  }
-
-  const image = arg.map.image;
-  const width = image.width;
-  const height = image.height;
-  const src = image.src;
-
-  const customSkinLink = getCurrentSkinUrl();
-
-  const isSkinTexture = (width === 64 || width === 42) &&
-    (height === 64 || height === 42 || height === 32);
-
-  if (customSkinLink &&
-    isSkinTexture &&
-    src !== muzzleImg &&
-    src !== customSkinLink &&
-    !src.includes(muzzleImg2) &&
-    !patchedImages.has(image)) {
-
-    image.src = customSkinLink;
-    patchedImages.add(image);
-  }
-
-  return oldIsArr.apply(Array, args);
-};
+const _origSrc = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
+Object.defineProperty(HTMLImageElement.prototype, 'src', {
+  set(value) {
+    _origSrc.set.call(this, value);
+    if (patchedImages.has(this)) return;
+    const skinUrl = getCurrentSkinUrl();
+    if (!skinUrl) return;
+    const tryPatch = () => {
+      if (patchedImages.has(this)) return;
+      const nw = this.naturalWidth, nh = this.naturalHeight;
+      if ((nw === 64 || nw === 42) && (nh === 64 || nh === 42 || nh === 32) && this.src !== muzzleImg && !this.src.includes(muzzleImg2) && this.src !== skinUrl) {
+        patchedImages.add(this);
+        _origSrc.set.call(this, skinUrl);
+      }
+    };
+    if (this.complete) tryPatch();
+    else this.addEventListener('load', tryPatch, { once: true });
+  },
+  get() { return _origSrc.get.call(this); },
+  configurable: true,
+  enumerable: true,
+});

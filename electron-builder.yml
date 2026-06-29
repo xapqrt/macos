@@ -1,5 +1,6 @@
 appId: com.zvipexx.dawn
-productName: Dawn Client
+productName: macos client
+electronVersion: 10.4.7
 directories:
   output: "build"
 npmRebuild: false
@@ -13,6 +14,9 @@ win:
 mac:
   target: dmg
   icon: "src/assets/img/icon.icns"
+  category: public.app-category.games
+  extendInfo:
+    LSSupportsGameMode: true
   artifactName: "${name}-setup-mac-${version}.${ext}"
 linux:
   target:

@@ -6,39 +6,46 @@ const { addOpenerList } = require("../addons/opener");
 const { initBrowser } = require("../addons/browser");
 const { clipboard } = require("electron");
 
+// Capture-phase keybind interceptor — runs at module load, BEFORE any page JS
+let _menuInstance = null;
+let _pendingToggle = false;
+document.addEventListener("keydown", (e) => {
+  const isRS = e.code === "ShiftRight" || (e.key === "Shift" && e.location === 2);
+  if (!isRS) return;
+  e.stopPropagation();
+  e.preventDefault();
+  if (_menuInstance && _menuInstance.menuToggle) {
+    if (!_menuInstance._domReady) _menuInstance._initMenuDOM();
+    const isActive = _menuInstance.menuToggle.getAttribute("data-active") === "true";
+    if (!isActive) document.exitPointerLock();
+    _menuInstance.menuToggle.setAttribute("data-active", !isActive);
+    _menuInstance.localStorage.setItem("juice-menu", !isActive);
+  } else {
+    _pendingToggle = true;
+  }
+}, true);
+document.addEventListener("keyup", (e) => {
+  const isRS = e.code === "ShiftRight" || (e.key === "Shift" && e.location === 2);
+  if (isRS) { e.stopPropagation(); e.preventDefault(); }
+}, true);
+
 class Menu {
   constructor() {
     this.settings = ipcRenderer.sendSync("get-settings");
-    this.menuCSS = fs.readFileSync(
-      path.join(__dirname, "../assets/css/menu.css"),
-      "utf8"
-    );
-    this.menuHTML = fs.readFileSync(
-      path.join(__dirname, "../assets/html/menu.html"),
-      "utf8"
-    );
-    this.menu = this.createMenu();
+    this._domReady = false;
     this.localStorage = window.localStorage;
-    this.menuToggle = this.menu.querySelector(".menu");
-    this.tabToContentMap = {
-      ui: this.menu.querySelector("#ui-options"),
-      game: this.menu.querySelector("#game-options"),
-      browse: this.menu.querySelector("#browse-options"),
-      community: this.menu.querySelector("#community-options"),
-      css: this.menu.querySelector("#css-options"),
-      sounds: this.menu.querySelector("#sounds-options"),
-      textures: this.menu.querySelector("#textures-options"),
-      crosshairs: this.menu.querySelector("#crosshairs-options"),
-      skyboxes: this.menu.querySelector("#skyboxes-options"),
-      killicons: this.menu.querySelector("#killicons-options"),
-      maps: this.menu.querySelector("#maps-options"),
-      gallery: this.menu.querySelector("#gallery-options"),
-      performance: this.menu.querySelector("#performance-options"),
-      client: this.menu.querySelector("#client-options"),
-      scripts: this.menu.querySelector("#scripts-options"),
-      about: this.menu.querySelector("#about-client"),
-      changelogs: this.menu.querySelector("#client-changelogs"),
-    };
+    this.menu = null;
+    this.menuToggle = null;
+    this.tabToContentMap = {};
+    _menuInstance = this;
+    if (_pendingToggle) {
+      _pendingToggle = false;
+      this._initMenuDOM();
+      const isActive = this.menuToggle?.getAttribute("data-active") === "true";
+      if (!isActive) document.exitPointerLock();
+      this.menuToggle?.setAttribute("data-active", !isActive);
+      this.localStorage.setItem("juice-menu", !isActive);
+    }
     this.weaponIds = ["vita", "scar", "rev", "ar9", "mac10", "m60", "weatie", "lar", "shark", "bayonet", "tomahawk"];
     this.restingSigToWeaponId = {
       "0.11,0.11,0.11": "vita",
@@ -63,20 +70,49 @@ class Menu {
     this.updateGlobalWeaponConfig();
   }
 
-  createMenu() {
+  _buildDOM() {
+    if (this._domReady) return;
+    const menuCSS = fs.readFileSync(path.join(__dirname, "../assets/css/menu.css"), "utf8");
+    const menuHTML = fs.readFileSync(path.join(__dirname, "../assets/html/menu.html"), "utf8");
     const menu = document.createElement("div");
-    menu.innerHTML = this.menuHTML;
+    menu.innerHTML = menuHTML;
     menu.id = "juice-menu";
-    menu.style.cssText =
-      "z-index: 99999999; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);";
-    const menuCSS = document.createElement("style");
-    menuCSS.innerHTML = this.menuCSS;
-    menu.prepend(menuCSS);
+    menu.style.cssText = "z-index: 99999999; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);";
+    const cssEl = document.createElement("style");
+    cssEl.innerHTML = menuCSS;
+    menu.prepend(cssEl);
     document.body.appendChild(menu);
-    return menu;
+    this.menu = menu;
+    this.menuToggle = menu.querySelector(".menu");
+    this.tabToContentMap = {
+      ui: menu.querySelector("#ui-options"),
+      game: menu.querySelector("#game-options"),
+      browse: menu.querySelector("#browse-options"),
+      community: menu.querySelector("#community-options"),
+      css: menu.querySelector("#css-options"),
+      sounds: menu.querySelector("#sounds-options"),
+      textures: menu.querySelector("#textures-options"),
+      crosshairs: menu.querySelector("#crosshairs-options"),
+      skyboxes: menu.querySelector("#skyboxes-options"),
+      killicons: menu.querySelector("#killicons-options"),
+      maps: menu.querySelector("#maps-options"),
+      gallery: menu.querySelector("#gallery-options"),
+      performance: menu.querySelector("#performance-options"),
+      client: menu.querySelector("#client-options"),
+      scripts: menu.querySelector("#scripts-options"),
+      about: menu.querySelector("#about-client"),
+      changelogs: menu.querySelector("#client-changelogs"),
+    };
+    this._domReady = true;
   }
 
   init() {
+    this.handleKeyEvents();
+  }
+
+  _initMenuDOM() {
+    if (this._domReady) return;
+    this._buildDOM();
     this.setVersion();
     this.setUser();
     this.setKeybind();
@@ -86,7 +122,6 @@ class Menu {
     this.setLocalBadges();
     this.setLocalProfileBackground();
     this.setTheme();
-    this.handleKeyEvents();
     this.initMenu();
     this.initChangelogs();
     this.handleSliderInputs();
@@ -892,13 +927,17 @@ class Menu {
       document.body.style.userSelect = "";
     });
 
+    let resizeTimer;
     window.addEventListener("resize", () => {
-      const pos = getMenuPosition();
-      const maxX = window.innerWidth - menu.offsetWidth;
-      const maxY = window.innerHeight - menu.offsetHeight;
-      if (pos.x > maxX || pos.y > maxY || pos.x < -menu.offsetWidth || pos.y < -menu.offsetHeight) {
-        centerMenu();
-      }
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => {
+        const pos = getMenuPosition();
+        const maxX = window.innerWidth - menu.offsetWidth;
+        const maxY = window.innerHeight - menu.offsetHeight;
+        if (pos.x > maxX || pos.y > maxY || pos.x < -menu.offsetWidth || pos.y < -menu.offsetHeight) {
+          centerMenu();
+        }
+      }, 100);
     });
   }
 
@@ -1700,6 +1739,8 @@ class Menu {
   handleKeyEvents() {
     document.addEventListener("keydown", (e) => {
       if (e.code === this.settings.menu_keybind) {
+        e.stopPropagation();
+        if (!this._domReady) this._initMenuDOM();
         const isActive = this.menuToggle.getAttribute("data-active") === "true";
         if (!isActive) {
           document.exitPointerLock();
@@ -1707,7 +1748,7 @@ class Menu {
         this.menuToggle.setAttribute("data-active", !isActive);
         this.localStorage.setItem("juice-menu", !isActive);
       }
-    });
+    }, true);
   }
 
   initMenu() {

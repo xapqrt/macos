@@ -34,7 +34,7 @@ class DiscordRPC {
       startTimestamp: this.startTimestamp,
       state: "In the lobby",
       largeImageKey: "dawn",
-      largeImageText: `Dawn Client v${version}`,
+      largeImageText: `macos client v${version}`,
       instance: false,
       buttons: [
         { label: "Discord", url: "https://discord.gg/VsMEQ3HWs2" },

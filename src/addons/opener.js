@@ -246,41 +246,26 @@ async function executeCardScript(customcardlist) {
 
   //This code is for an animation for a specific rarity
   function confettiAnimation() {
-    const duration = 15 * 1000;
-    const animationEnd = Date.now() + duration;
-    const defaults = {
-      startVelocity: 30,
-      spread: 360,
-      ticks: 60,
-      zIndex: 0,
-    };
-
-    function randomInRange(min, max) {
-      return Math.random() * (max - min) + min;
+    if (!document.getElementById("konfettijs")) {
+      const s = document.createElement("script");
+      s.id = "konfettijs";
+      s.src = "https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.3/dist/confetti.browser.min.js";
+      document.head.appendChild(s);
     }
+
+    const duration = 6000;
+    const animationEnd = Date.now() + duration;
+    const defaults = { startVelocity: 20, spread: 360, ticks: 30, zIndex: 0 };
+
+    function randomInRange(min, max) { return Math.random() * (max - min) + min; }
 
     const intervalconfetti = setInterval(() => {
       const timeLeft = animationEnd - Date.now();
-
-      if (timeLeft <= 0) {
-        clearInterval(intervalconfetti);
-        return;
-      }
-
-      const particleCount = 50 * (timeLeft / duration);
-      confetti({
-        ...defaults,
-        particleCount,
-        origin: { x: randomInRange(0.1, 0.3), y: Math.random() - 0.2 },
-        zIndex: 99999,
-      });
-      confetti({
-        ...defaults,
-        particleCount,
-        origin: { x: randomInRange(0.7, 0.9), y: Math.random() - 0.2 },
-        zIndex: 99999,
-      });
-    }, 250);
+      if (timeLeft <= 0) { clearInterval(intervalconfetti); return; }
+      const particleCount = Math.round(20 * (timeLeft / duration));
+      confetti({ ...defaults, particleCount, origin: { x: randomInRange(0.1, 0.3), y: Math.random() - 0.2 }, zIndex: 99999 });
+      confetti({ ...defaults, particleCount, origin: { x: randomInRange(0.7, 0.9), y: Math.random() - 0.2 }, zIndex: 99999 });
+    }, 500);
   }
 
   //This one handles updatign the counter variable
@@ -414,14 +399,6 @@ async function executeCardScript(customcardlist) {
   automatic_microwaves(inventory);
 
   cardskipper = processCardskipper(cardskipper, inventory);
-
-  if (!document.getElementById("konfettijs")) {
-    let script = document.createElement("script");
-    script.id = "konfettijs";
-    script.src =
-      "https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.3/dist/confetti.browser.min.js";
-    document.head.appendChild(script);
-  }
 
   let openedItems = {};
   let counter = 0;
