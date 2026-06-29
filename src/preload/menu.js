@@ -821,6 +821,7 @@ class Menu {
     let startMenuX = 0;
     let startMenuY = 0;
     let savedTransition = "";
+    let _dragDx = 0, _dragDy = 0, _dragRafId = 0;
 
     function setMenuPosition(x, y) {
       menu._posX = x;
@@ -852,10 +853,14 @@ class Menu {
     document.addEventListener("mousemove", (e) => {
       if (!isDragging) return;
 
-      const dx = e.clientX - startMouseX;
-      const dy = e.clientY - startMouseY;
-
-      setMenuPosition(startMenuX + dx, startMenuY + dy);
+      _dragDx = e.clientX - startMouseX;
+      _dragDy = e.clientY - startMouseY;
+      if (!_dragRafId) {
+        _dragRafId = requestAnimationFrame(() => {
+          _dragRafId = 0;
+          setMenuPosition(startMenuX + _dragDx, startMenuY + _dragDy);
+        });
+      }
     });
 
     document.addEventListener("mouseup", () => {
@@ -863,6 +868,7 @@ class Menu {
         localStorage.setItem("menu-position", JSON.stringify({ x: menu._posX, y: menu._posY }));
       }
       isDragging = false;
+      if (_dragRafId) { cancelAnimationFrame(_dragRafId); _dragRafId = 0; }
 
       menu.style.transition = savedTransition;
 
@@ -902,6 +908,7 @@ class Menu {
     let savedTransition = "";
     let _menuW = 0;
     let _menuH = 0;
+    let _resizeDx = 0, _resizeDy = 0, _resizeRafId = 0;
 
     function saveSize() {
       localStorage.setItem("menu-size", JSON.stringify({ w: _menuW, h: _menuH }));
@@ -925,6 +932,38 @@ class Menu {
     function syncMenuDims() {
       _menuW = menu.offsetWidth;
       _menuH = menu.offsetHeight;
+    }
+
+    function applyResize() {
+      const dx = _resizeDx;
+      const dy = _resizeDy;
+
+      let newW = startW;
+      let newH = startH;
+      let newX = startX;
+      let newY = startY;
+
+      if (edges.right) newW = Math.max(MIN_W, startW + dx);
+      if (edges.bottom) newH = Math.max(MIN_H, startH + dy);
+
+      if (edges.left) {
+        newW = Math.max(MIN_W, startW - dx);
+        newX = startX + (startW - newW);
+      }
+
+      if (edges.top) {
+        newH = Math.max(MIN_H, startH - dy);
+        newY = startY + (startH - newH);
+      }
+
+      _menuW = newW;
+      _menuH = newH;
+      menu._posX = newX;
+      menu._posY = newY;
+      menu.style.width = `${newW}px`;
+      menu.style.height = `${newH}px`;
+      menu.style.transform = `translate3d(${newX}px, ${newY}px, 0)`;
+      _resizeRafId = 0;
     }
 
     const handles = [
@@ -981,39 +1020,17 @@ class Menu {
     document.addEventListener("mousemove", (e) => {
       if (!isResizing) return;
 
-      const dx = e.clientX - startMouseX;
-      const dy = e.clientY - startMouseY;
-
-      let newW = startW;
-      let newH = startH;
-      let newX = startX;
-      let newY = startY;
-
-      if (edges.right) newW = Math.max(MIN_W, startW + dx);
-      if (edges.bottom) newH = Math.max(MIN_H, startH + dy);
-
-      if (edges.left) {
-        newW = Math.max(MIN_W, startW - dx);
-        newX = startX + (startW - newW);
+      _resizeDx = e.clientX - startMouseX;
+      _resizeDy = e.clientY - startMouseY;
+      if (!_resizeRafId) {
+        _resizeRafId = requestAnimationFrame(applyResize);
       }
-
-      if (edges.top) {
-        newH = Math.max(MIN_H, startH - dy);
-        newY = startY + (startH - newH);
-      }
-
-      _menuW = newW;
-      _menuH = newH;
-      menu._posX = newX;
-      menu._posY = newY;
-      menu.style.width = `${newW}px`;
-      menu.style.height = `${newH}px`;
-      menu.style.transform = `translate3d(${newX}px, ${newY}px, 0)`;
     });
 
     document.addEventListener("mouseup", () => {
       if (!isResizing) return;
       isResizing = false;
+      if (_resizeRafId) { cancelAnimationFrame(_resizeRafId); _resizeRafId = 0; }
 
       menu.style.transition = savedTransition;
       document.body.style.userSelect = "";

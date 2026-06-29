@@ -29,6 +29,11 @@ function applySwitches(settings) {
   app.commandLine.appendSwitch("canvas-msaa-sample-count", "0");
   app.commandLine.appendSwitch("disable-2d-canvas-clip-aa");
 
+  // Chromium 89+ GPU blocklist flag (rename from ignore-gpu-blacklist)
+  app.commandLine.appendSwitch("ignore-gpu-blocklist");
+  // Skip all GPU driver bug workarounds — saves CPU cycles in the GPU process
+  app.commandLine.appendSwitch("disable-gpu-driver-bug-workarounds");
+
   // Disable unnecessary Chrome features — saves CPU and memory
   app.commandLine.appendSwitch("disable-features", [
     "ChromeWhatsNewUI",
@@ -45,6 +50,30 @@ function applySwitches(settings) {
     "InterestFeedContentSuggestions",
     "NotificationIndicator",
     "RendererPriorityManagement",
+    "OptimizationHints",
+    "SynchronousSafeBrowsing",
+    "PermissionsBlacklistConfiguration",
+    "SchedulerTaskSplitting",
+    "LazyFrameLoading",
+    "LazyImageLoading",
+    "NetworkPrediction",
+    "WebRtc",
+    "Translate",
+    "CreatorFeedReportingDialog",
+    "EnableProfileShortcutsMenu",
+    "ReaderMode",
+    "RelatedPosts",
+    "SendTabToSelf",
+    "OmniboxAnswerActions",
+    "DiscoverFeed",
+    "NtpPopularSites",
+    "NtpMiddleTilePromo",
+    "RecordAutofillEvent",
+    "SafeBrowsingAvailable",
+    "UserConsent",
+    "SigninPromo",
+    "NewTabPage",
+    "HistoryClusters",
   ].join(","));
 
   app.allowRendererProcessReuse = true;
