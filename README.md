@@ -12,10 +12,10 @@ Built for **maximum stable FPS, minimal input latency, and zero micro-stuttering
 
 | Area | Dawn Client | macos client |
 |------|-------------|--------------|
-| Electron | 10.4.7 (x64 only, Rosetta 2 on Apple Silicon) | **11.5.0** (native arm64 on M1–M4, zero translation overhead) |
-| Chromium | 85 | 87 |
-| V8 | 8.5 | 8.7 |
-| Node.js | 12.16 | 12.18 |
+| Electron | 10.4.7 (x64 only, Rosetta 2 on Apple Silicon) | **12.2.3** (native arm64 on M1–M4, zero translation overhead) |
+| Chromium | 85 | **89** — improved WebGL driver stack, fewer draw-call overhead |
+| V8 | 8.5 | **8.8** — better JIT inline caching, faster property access in hot paths |
+| Node.js | 12.16 | **14.16** — better performance, stable diagnostics |
 | Binary format | Mach-O x86_64 | **Mach-O arm64** — executes directly on Apple Silicon performance cores |
 | Auto-updater | `electron-updater` with GitHub check on launch (blocking) | **Removed** — instant startup, no network fetch |
 | electron-updater package | Present as dependency | **Removed** from dependencies |
