@@ -192,19 +192,23 @@ const removeCss = () => {
 const applyCrosshair = (url) => {
   localStorage.setItem("SETTINGS___SETTING/CROSSHAIR___SETTING/STATIC_URL___SETTING", url);
   localStorage.setItem("SETTINGS___SETTING/SNIPER___SETTING/SCOPE_URL___SETTING", url);
+  ipcRenderer.send("update-setting", "crosshair_url", url);
 };
 
 const removeCrosshair = () => {
   localStorage.removeItem("SETTINGS___SETTING/CROSSHAIR___SETTING/STATIC_URL___SETTING");
   localStorage.removeItem("SETTINGS___SETTING/SNIPER___SETTING/SCOPE_URL___SETTING");
+  ipcRenderer.send("update-setting", "crosshair_url", "");
 };
 
 const applyTexture = (url) => {
   localStorage.setItem("SETTINGS___SETTING/BLOCKS___SETTING/TEXTURE_URL___SETTING", url);
+  ipcRenderer.send("update-setting", "texture_url", url);
 };
 
 const removeTexture = () => {
   localStorage.removeItem("SETTINGS___SETTING/BLOCKS___SETTING/TEXTURE_URL___SETTING");
+  ipcRenderer.send("update-setting", "texture_url", "");
 };
 
 const skyboxKeys = [
@@ -232,6 +236,7 @@ const removeSkybox = () => {
 };
 
 const applyKillIcon = (url) => {
+  ipcRenderer.send("update-setting", "killicon_link", url);
   document.dispatchEvent(new CustomEvent("juice-settings-changed", { detail: { setting: "killicon_link", value: url } }));
 
   let styleEl = document.getElementById("juice-styles-ui-features");
@@ -248,6 +253,7 @@ const applyKillIcon = (url) => {
 };
 
 const removeKillIcon = () => {
+  ipcRenderer.send("update-setting", "killicon_link", "");
   document.dispatchEvent(new CustomEvent("juice-settings-changed", { detail: { setting: "killicon_link", value: "" } }));
 
   const styleEl = document.getElementById("juice-styles-ui-features");

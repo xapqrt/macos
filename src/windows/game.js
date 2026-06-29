@@ -354,7 +354,7 @@ const createWindow = () => {
     height: 720,
     show: false,
     backgroundColor: "#141414",
-    backgroundThrottling: false,
+    backgroundThrottling: true,
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false,

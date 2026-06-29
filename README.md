@@ -101,10 +101,28 @@ Built for **maximum stable FPS, minimal input latency, and zero micro-stuttering
 `InterestFeed`, `NotificationIndicator`, `RendererPriorityManagement`,
 `TranslateGoogletranslateIntegration`
 
-## Optimizations Not Yet Applied
+## Keybind Fixes
 
-- `requestIdleCallback()` for non-critical style work (badge creation, number formatting)
-- Passive touch/wheel event listeners (game doesn't use them)
+| Issue | Root Cause | Fix |
+|-------|-----------|-----|
+| Right Shift menu flicker | `window.load` listener never fires (already fired before menu init); menu shown before position applied | Position set synchronously after DOM build; `e.preventDefault()` added; 250ms debounce prevents double-fire |
+
+## Community Content Fixes
+
+| Content | Issue | Fix |
+|---------|-------|-----|
+| CSS themes | `settings.css_link` never updated in renderer's in-memory settings (whitelist didn't include it) | All `juice-settings-changed` events now update `settings[setting]` unconditionally |
+| Kill Icons | `applyKillIcon()` didn't persist via IPC — lost on restart | Added `ipcRenderer.send("update-setting", "killicon_link", url)` |
+| Crosshairs | localStorage only, no IPC persistence | Added `ipcRenderer.send("update-setting", "crosshair_url", url)` |
+| Textures | localStorage only, no IPC persistence | Added `ipcRenderer.send("update-setting", "texture_url", url)` |
+| Injected styles | Game SPA navigation could remove Dawn's `<style>` elements | MutationObserver re-injects `#juice-styles-theme` and `#juice-styles-ui-features` if removed |
+
+## Thermal & Performance
+
+| Setting | Before | After |
+|---------|--------|-------|
+| `backgroundThrottling` | `false` — RAF runs at full speed even when minimized | `true` (default) — Chromium throttles to 1fps when hidden, saves battery/heat |
+| Electron native module | `electron-localshortcut` (C++ addon, arm64 rebuild required) | Removed, replaced with built-in `globalShortcut`
 
 ## Prerequisites
 

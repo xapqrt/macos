@@ -834,20 +834,6 @@ class Menu {
       setMenuPosition(-w / 2, -h / 2);
     }
 
-    window.addEventListener("load", () => {
-      const savedPos = localStorage.getItem("menu-position");
-      if (savedPos) {
-        try {
-          const { x, y } = JSON.parse(savedPos);
-          setMenuPosition(x, y);
-        } catch {
-          centerMenu();
-        }
-      } else {
-        centerMenu();
-      }
-    });
-
     titlebar.addEventListener("mousedown", (e) => {
       isDragging = true;
 
@@ -1692,12 +1678,26 @@ class Menu {
   }
 
   handleKeyEvents() {
+    let _lastToggle = 0;
     document.addEventListener("keydown", (e) => {
       const targetKey = this.settings.menu_keybind;
-      const isTarget = e.code === targetKey || (targetKey === "ShiftRight" && e.key === "Shift" && e.location === 2);
+      const isTarget = (e.code === targetKey) || (targetKey === "ShiftRight" && e.key === "Shift" && e.location === 2);
       if (!isTarget) return;
+      e.preventDefault();
       e.stopPropagation();
-      if (!this._domReady) this._initMenuDOM();
+      const now = performance.now();
+      if (now - _lastToggle < 250) return;
+      _lastToggle = now;
+      if (!this._domReady) {
+        this._initMenuDOM();
+        const savedPos = this.localStorage.getItem("menu-position");
+        if (savedPos) {
+          try {
+            const { x, y } = JSON.parse(savedPos);
+            this.menu.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+          } catch {}
+        }
+      }
       const isActive = this.menuToggle.getAttribute("data-active") === "true";
       if (!isActive) document.exitPointerLock();
       this.menuToggle.setAttribute("data-active", !isActive);

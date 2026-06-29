@@ -4908,16 +4908,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   document.addEventListener("juice-settings-changed", ({ detail }) => {
     const { setting, value } = detail;
 
-    const directSettings = [
-      "weapon_offset_x", "weapon_offset_y", "weapon_offset_z",
-      "weapon_size", "weapon_wireframe", "weapon_rgb", "weapon_color",
-      "include_arms", "customizations",
-      "local_customizations", "map_backgrounds"
-    ];
-
-    if (directSettings.includes(setting)) {
-      settings[setting] = value;
-    }
+    settings[setting] = value;
 
     switch (setting) {
       case "menu_keybind":
@@ -5005,6 +4996,20 @@ window.addEventListener("DOMContentLoaded", async () => {
     loadTheme();
     applyUIFeatures();
   };
+
+  const _observeInjectedStyles = () => {
+    const watcher = new MutationObserver(() => {
+      if (!document.getElementById("juice-styles-theme")) {
+        loadTheme();
+      }
+      if (!document.getElementById("juice-styles-ui-features") && window.updateUIFeatures) {
+        applyUIFeatures();
+      }
+    });
+    const target = document.head || document.documentElement;
+    watcher.observe(target, { childList: true, subtree: true });
+  };
+  _observeInjectedStyles();
 
   handleInitialLoad();
 });
