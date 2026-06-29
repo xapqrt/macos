@@ -6,24 +6,6 @@ const { addOpenerList } = require("../addons/opener");
 const { initBrowser } = require("../addons/browser");
 const { clipboard } = require("electron");
 
-// Capture-phase keybind interceptor — runs at module load, BEFORE any page JS
-let _menuInstance = null;
-let _pendingToggle = false;
-document.addEventListener("keydown", (e) => {
-  const isRS = e.code === "ShiftRight" || e.code === "Shift" || (e.key === "Shift" && e.location === 2);
-  if (!isRS) return;
-  e.stopPropagation();
-  if (_menuInstance && _menuInstance.menuToggle) {
-    if (!_menuInstance._domReady) _menuInstance._initMenuDOM();
-    const isActive = _menuInstance.menuToggle.getAttribute("data-active") === "true";
-    if (!isActive) document.exitPointerLock();
-    _menuInstance.menuToggle.setAttribute("data-active", !isActive);
-    _menuInstance.localStorage.setItem("juice-menu", !isActive);
-  } else {
-    _pendingToggle = true;
-  }
-}, true);
-
 class Menu {
   constructor() {
     this.settings = ipcRenderer.sendSync("get-settings");
@@ -32,15 +14,6 @@ class Menu {
     this.menu = null;
     this.menuToggle = null;
     this.tabToContentMap = {};
-    _menuInstance = this;
-    if (_pendingToggle) {
-      _pendingToggle = false;
-      this._initMenuDOM();
-      const isActive = this.menuToggle?.getAttribute("data-active") === "true";
-      if (!isActive) document.exitPointerLock();
-      this.menuToggle?.setAttribute("data-active", !isActive);
-      this.localStorage.setItem("juice-menu", !isActive);
-    }
     this.weaponIds = ["vita", "scar", "rev", "ar9", "mac10", "m60", "weatie", "lar", "shark", "bayonet", "tomahawk"];
     this.restingSigToWeaponId = {
       "0.11,0.11,0.11": "vita",
@@ -850,25 +823,15 @@ class Menu {
     let savedTransition = "";
 
     function setMenuPosition(x, y) {
+      menu._posX = x;
+      menu._posY = y;
       menu.style.transform = `translate3d(${x}px, ${y}px, 0)`;
     }
 
-    function getMenuPosition() {
-      const transform = getComputedStyle(menu).transform;
-      if (transform && transform !== "none") {
-        const values = transform.match(/matrix.*\((.+)\)/)[1].split(",");
-        return {
-          x: parseFloat(values[4]) || 0,
-          y: parseFloat(values[5]) || 0
-        };
-      }
-      return { x: 0, y: 0 };
-    }
-
     function centerMenu() {
-      const x = 0 - menu.offsetWidth / 2;
-      const y = 0 - menu.offsetHeight / 2;
-      setMenuPosition(x, y);
+      const w = menu.offsetWidth;
+      const h = menu.offsetHeight;
+      setMenuPosition(-w / 2, -h / 2);
     }
 
     window.addEventListener("load", () => {
@@ -891,9 +854,8 @@ class Menu {
       savedTransition = menu.style.transition;
       menu.style.transition = "none";
 
-      const pos = getMenuPosition();
-      startMenuX = pos.x;
-      startMenuY = pos.y;
+      startMenuX = menu._posX || 0;
+      startMenuY = menu._posY || 0;
 
       startMouseX = e.clientX;
       startMouseY = e.clientY;
@@ -912,8 +874,7 @@ class Menu {
 
     document.addEventListener("mouseup", () => {
       if (isDragging) {
-        const pos = getMenuPosition();
-        localStorage.setItem("menu-position", JSON.stringify(pos));
+        localStorage.setItem("menu-position", JSON.stringify({ x: menu._posX, y: menu._posY }));
       }
       isDragging = false;
 
@@ -926,10 +887,11 @@ class Menu {
     window.addEventListener("resize", () => {
       clearTimeout(resizeTimer);
       resizeTimer = setTimeout(() => {
-        const pos = getMenuPosition();
-        const maxX = window.innerWidth - menu.offsetWidth;
-        const maxY = window.innerHeight - menu.offsetHeight;
-        if (pos.x > maxX || pos.y > maxY || pos.x < -menu.offsetWidth || pos.y < -menu.offsetHeight) {
+        const w = menu.offsetWidth;
+        const h = menu.offsetHeight;
+        const maxX = window.innerWidth - w;
+        const maxY = window.innerHeight - h;
+        if ((menu._posX || 0) > maxX || (menu._posY || 0) > maxY || (menu._posX || 0) < -w || (menu._posY || 0) < -h) {
           centerMenu();
         }
       }, 100);
@@ -952,25 +914,11 @@ class Menu {
     let startX = 0;
     let startY = 0;
     let savedTransition = "";
+    let _menuW = 0;
+    let _menuH = 0;
 
-    function getMenuPosition() {
-      const transform = getComputedStyle(menu).transform;
-      if (transform && transform !== "none") {
-        const values = transform.match(/matrix.*\((.+)\)/)[1].split(",");
-        return {
-          x: parseFloat(values[4]) || 0,
-          y: parseFloat(values[5]) || 0,
-        };
-      }
-      return { x: 0, y: 0 };
-    }
-
-    function setMenuPosition(x, y) {
-      menu.style.transform = `translate3d(${x}px, ${y}px, 0)`;
-    }
-
-    function saveSize(w, h) {
-      localStorage.setItem("menu-size", JSON.stringify({ w, h }));
+    function saveSize() {
+      localStorage.setItem("menu-size", JSON.stringify({ w: _menuW, h: _menuH }));
     }
 
     function loadSize() {
@@ -979,11 +927,18 @@ class Menu {
         if (saved) {
           const { w, h } = JSON.parse(saved);
           if (w >= MIN_W && h >= MIN_H) {
+            _menuW = w;
+            _menuH = h;
             menu.style.width = `${w}px`;
             menu.style.height = `${h}px`;
           }
         }
       } catch { }
+    }
+
+    function syncMenuDims() {
+      _menuW = menu.offsetWidth;
+      _menuH = menu.offsetHeight;
     }
 
     const handles = [
@@ -997,7 +952,8 @@ class Menu {
       { cls: "se", cursor: "se-resize", edges: { bottom: true, right: true } },
     ];
 
-    handles.forEach(({ cls, cursor, edges: handleEdges }) => {
+    for (let hi = 0; hi < handles.length; hi++) {
+      const { cls, cursor, edges: handleEdges } = handles[hi];
       const el = document.createElement("div");
       el.className = `menu-resize-handle menu-resize-${cls}`;
       el.style.cssText = `position:absolute;z-index:10;`;
@@ -1020,21 +976,21 @@ class Menu {
         savedTransition = menu.style.transition;
         menu.style.transition = "none";
 
-        startMouseX = e.clientҦ;
-        startMouseY = e.clientY;
-        startW = menu.offsetWidth;
-        startH = menu.offsetHeight;
+        syncMenuDims();
 
-        const pos = getMenuPosition();
-        startX = pos.x;
-        startY = pos.y;
+        startMouseX = e.clientX;
+        startMouseY = e.clientY;
+        startW = _menuW;
+        startH = _menuH;
+        startX = menu._posX || 0;
+        startY = menu._posY || 0;
 
         document.body.style.userSelect = "none";
         document.body.style.cursor = cursor;
       });
 
       menu.appendChild(el);
-    });
+    }
 
     document.addEventListener("mousemove", (e) => {
       if (!isResizing) return;
@@ -1060,9 +1016,13 @@ class Menu {
         newY = startY + (startH - newH);
       }
 
+      _menuW = newW;
+      _menuH = newH;
+      menu._posX = newX;
+      menu._posY = newY;
       menu.style.width = `${newW}px`;
       menu.style.height = `${newH}px`;
-      setMenuPosition(newX, newY);
+      menu.style.transform = `translate3d(${newX}px, ${newY}px, 0)`;
     });
 
     document.addEventListener("mouseup", () => {
@@ -1073,12 +1033,11 @@ class Menu {
       document.body.style.userSelect = "";
       document.body.style.cursor = "";
 
-      saveSize(menu.offsetWidth, menu.offsetHeight);
-
-      const pos = getMenuPosition();
-      localStorage.setItem("menu-position", JSON.stringify(pos));
+      saveSize();
+      localStorage.setItem("menu-position", JSON.stringify({ x: menu._posX, y: menu._posY }));
     });
 
+    syncMenuDims();
     window.addEventListener("load", loadSize);
   }
 
@@ -1565,6 +1524,7 @@ class Menu {
       urlInput.value = url;
 
       const preview = document.createElement("img");
+      preview.decoding = "async";
       preview.className = "badge-preview";
       if (url) {
         if (url.startsWith("/") || url.match(/^[A-Za-z]:\\/)) {
@@ -1733,16 +1693,15 @@ class Menu {
 
   handleKeyEvents() {
     document.addEventListener("keydown", (e) => {
-      if (e.code === this.settings.menu_keybind) {
-        e.stopPropagation();
-        if (!this._domReady) this._initMenuDOM();
-        const isActive = this.menuToggle.getAttribute("data-active") === "true";
-        if (!isActive) {
-          document.exitPointerLock();
-        }
-        this.menuToggle.setAttribute("data-active", !isActive);
-        this.localStorage.setItem("juice-menu", !isActive);
-      }
+      const targetKey = this.settings.menu_keybind;
+      const isTarget = e.code === targetKey || (targetKey === "ShiftRight" && e.key === "Shift" && e.location === 2);
+      if (!isTarget) return;
+      e.stopPropagation();
+      if (!this._domReady) this._initMenuDOM();
+      const isActive = this.menuToggle.getAttribute("data-active") === "true";
+      if (!isActive) document.exitPointerLock();
+      this.menuToggle.setAttribute("data-active", !isActive);
+      this.localStorage.setItem("juice-menu", !isActive);
     }, true);
   }
 

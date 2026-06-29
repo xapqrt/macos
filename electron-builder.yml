@@ -27,6 +27,6 @@ linux:
   artifactName: "${name}-${version}-linux-${arch}.${ext}"
 publish:
   - provider: github
-    owner: zVipexx
-    repo: dawn-client
+    owner: xapqrt
+    repo: macos
     releaseType: release

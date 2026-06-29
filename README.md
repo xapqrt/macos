@@ -1,196 +1,113 @@
-<div align="center">
+# macos client
 
-<img src="https://i.imgur.com/PY7bWUX.png" width="120" height="120" alt="Dawn Client Logo" />
+A performance-optimized Electron client for Kirka.io, forked from [Dawn Client](https://github.com/zVipexx/dawn-client) by zVipexx.
 
-<br />
-
-# Dawn Client
-
-### An unofficial, feature-rich Electron client for Kirka.io
-
-<br />
-
-[![Discord](https://img.shields.io/badge/Discord-Join-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/VsMEQ3HWs2)
-[![GitHub Releases](https://img.shields.io/github/v/release/zVipexx/dawn-client?color=0f0f0f&label=Latest&logo=github&logoColor=white&style=for-the-badge)](https://github.com/zVipexx/dawn-client/releases)
-[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-blue?style=for-the-badge&logo=linux&logoColor=white)](https://github.com/zVipexx/dawn-client/releases)
-
-<br />
-
-[**Download**](#download) • [**Features**](#features) • [**Hotkeys**](#hotkeys) • [**Safety**](#is-it-safe) • [**Credits**](#credits)
+Built for **maximum stable FPS, minimal input latency, and zero micro-stuttering** on macOS (Apple Silicon via Rosetta 2, Electron 10 x64).
 
 ---
 
-</div>
+## Changes vs Dawn Client
 
-## Download
+### Performance (WebGL Hot Path)
 
-Head to the [**Releases**](https://github.com/zVipexx/dawn-client/releases) page to grab the latest installer for Windows, macOS, or Linux.
- 
-### Or build it yourself
- 
-Make sure you have [Node.js](https://nodejs.org) and [Git](https://git-scm.com) installed, then run:
- 
+| Area | Dawn Client | macos client |
+|------|-------------|--------------|
+| Matrix dedup data structure | `new Set()` allocated once per context | `Object.create(null)` — faster has/add/delete for small sets |
+| Frame tracking | `seenMatricesThisFrame.clear()` | `_clearSeen()` — deletes individual keys, avoids full reallocate for <64 entries |
+| Config fallback objects | Created inline `{ size:, offsetX:, ... }` on every weapon matrix call | Pre-hoisted constants `_cfgFallback`, `_globalFallback`, `_armFallback` — zero allocs per frame |
+| Hex color parsing | `hex.substring()` + `parseInt()` on every frame (3 new strings) | `_hexCache` Map — parsed once, cached forever |
+| Matched-weapon dedup | `[...badgesElem.children].some(...)` — new array per badge check | Indexed `for` loop — zero allocation |
+| `forEach` on badge iteration | `customs.badges.forEach(...)` — callback per badge | Indexed `for` loop — direct iteration |
+| In-flight deduplication | None — multiple simultaneous `fetch()` for same URL | `inflightFetches` Map — reuses in-flight promise |
+
+### Forced Layout Elimination
+
+| Area | Dawn Client | macos client |
+|------|-------------|--------------|
+| Menu position tracking | `getComputedStyle(menu).transform` + regex parse every drag/resize start | `menu._posX` / `menu._posY` — tracked in JS variables, never reads computed style |
+| Menu dimensions | `menu.offsetWidth` / `menu.offsetHeight` read on every resize mousedown + mouseup | Cached in `_menuW` / `_menuH` at mousedown, written back on mouseup — single layout read |
+| Resize mousemove handler | `getMenuPosition()` called on every pixel (forced layout + string parse) | Only writes `style.width/height/transform` — no reads at all |
+| Window resize handler | 4x `menu.offsetWidth/Height` reads + `getMenuPosition()` + `centerMenu()` | 2x reads cached in local vars, position from `menu._posX/Y` |
+| Checkbox toggle animation | `transition: left 0.3s` — triggers layout every frame | `transition: transform 0.3s` + `translateX()` — pure compositing |
+| Server list MutationObserver | `document.querySelectorAll(".server")` on every mutation (full DOM query of all servers) | Iterates only `mutation.addedNodes` / `removedNodes` — processes exactly what changed |
+
+### Image Decode Optimization
+
+| Area | Dawn Client | macos client |
+|------|-------------|--------------|
+| Badge images | `document.createElement("img")` + `.src =` on main thread (decode blocks) | `img.decoding = "async"` + `img.loading = "lazy"` — decode off main thread |
+| Lobby news images | No optimization | `decoding = "async"`, `loading = "lazy"` |
+| Badge preview in menu | No optimization | `decoding = "async"` |
+| Map backgrounds | No lazy loading | `IntersectionObserver` with 200px rootMargin (already in Dawn) |
+
+### Render Pipeline
+
+| Area | Dawn Client | macos client |
+|------|-------------|--------------|
+| Observer callbacks | Run synchronously in mutation handler | `queueStyleWrite()` — all DOM writes batched to RAF flush |
+| RAF flush | No batching | Single RAF per frame, all style writes consolidated |
+| CSS will-change | Not present on `.menu` | `will-change: transform` on `.menu` + `contain: layout style paint` (inherited from Dawn) |
+| CSS composited layers | No hints | `translateZ(0)` on `#game`, `will-change` on interface, `contain: paint` on kill-feed (inherited from Dawn) |
+
+### Startup & Resource Loading
+
+| Area | Dawn Client | macos client |
+|------|-------------|--------------|
+| Auto-updater | `checkForUpdates()` on every launch — GitHub API fetch blocks startup | Removed entirely — instant splash → game transition |
+| Preconnect hints | None | `raw.githubusercontent.com`, `juice.irrvlo.xyz`, `api.kirka.io` |
+| Menu DOM | Built on `DOMContentLoaded` (1292-line HTML + 2747-line CSS file reads) | Built on first keybind press — deferred until needed |
+| Window resize handler | No debounce | 100ms debounce |
+| cachedFetch | localStorage only (disk read every tab switch) | In-memory `Map` checked before localStorage — no disk reads for repeated access |
+
+### Game Mode & macOS Integration
+
+| Area | Dawn Client | macos client |
+|------|-------------|--------------|
+| `LSApplicationCategoryType` | Not set | `public.app-category.games` |
+| `LSSupportsGameMode` | Not set | `true` — macOS Game Mode API on supported versions |
+| `backgroundThrottling` | Default (`true`) | `false` — timers/animations never throttle in background |
+| Native fullscreen | Default | Always `true` on `ready-to-show` |
+| Product name | "dawn-client" | "macos client" |
+
+### GPU & Chromium Flags
+
+| Flag | Dawn Client | macos client |
+|------|-------------|--------------|
+| `force-gpu-mem-available-mb` | Not set | `4096` — prevents texture thrashing on Rosetta |
+| `enable-webgl-image-chromium` | Not set | Enabled |
+| `force-color-profile` | Not set | `srgb` |
+| `canvas-msaa-sample-count` | Not set | `0` — no MSAA, saves GPU memory |
+| `disable-2d-canvas-clip-aa` | Not set | Enabled |
+| `--optimize-for-size` | Not set | Added to V8 flags |
+| `--optimize-for-max-heap` | Not set | Added to V8 flags |
+
+### Disabled Chrome Features
+
+11 features disabled to free CPU/memory:
+`MediaRouter`, `TranslateUI`, `LanguageDetection`, `PasswordGeneration`,
+`AutofillServerCommunication`, `AutofillMembershipPhp`, `InterestFeedContentSuggestions`,
+`InterestFeed`, `NotificationIndicator`, `RendererPriorityManagement`,
+`TranslateGoogletranslateIntegration`
+
+## Optimizations Not Yet Applied
+
+- `requestIdleCallback()` for non-critical style work (badge creation, number formatting)
+- Passive touch/wheel event listeners (game doesn't use them)
+
+## Prerequisites
+
+- macOS 10.13+ (Apple Silicon via Rosetta 2)
+- Node.js 14+ (for building)
+
+## Build
+
 ```bash
-# Clone the repository
-git clone https://github.com/zVipexx/dawn-client.git
-cd dawn-client
- 
-# Install dependencies
 npm install
- 
-# Start the client
-npm run start
+npm_config_arch=x64 npx electron-builder --mac --x64
 ```
- 
-To package a build for your platform:
- 
-```bash
-npm run build
-```
- 
-The output will be in the `build/` folder.
 
----
-
-## Features
-
-<details open>
-<summary><strong>🎨 Visuals & Rendering</strong></summary>
-
-<br />
-
-- **Uncapped FPS** - remove the frame rate cap
-- **Wireframe Weapon** - render your weapon (and optionally arms) in wireframe
-- **Custom CSS** - inject stylesheets via URL or local file path, with a toggle
-- **UI Animations Toggle** - enable or disable interface transitions
-- **Interface Opacity & Bounds** - fine-tune UI transparency and positioning
-- **Colored Kill Feed** - kills colored by team for quick readability
-
-</details>
-
-<br />
-
-<details open>
-<summary><strong>🔫 Weapon Customization</strong></summary>
-
-<br />
-
-- **Weapon Color** - tint your weapon a custom color, or enable Rainbow mode
-- **Weapon Size** - scale your weapon model up or down
-- **Weapon Offset** - fine-tune X/Y/Z position of your weapon in view
-- **Skin Changer** - apply custom skins to any weapon (client-side only)
-- **Permanent Crosshair** - always-visible crosshair, no fading when scoping
-
-</details>
-
-<br />
-
-<details open>
-<summary><strong>🔧 HUD & Interface</strong></summary>
-
-<br />
-
-- **Custom Hitmarker** - set via URL or local file path
-- **Custom Kill Icon** - set via URL or local file path
-- **K/D Indicator** - live kill/death ratio displayed in HUD
-- **Hide Chat / Hide Interface** - declutter or go fully immersive
-- **Permanent Tablist** - keep the scoreboard always visible
-- **Spectate Button** - quick-spectate friends directly from the friends list
-- **Skip Loading Screen** 
-
-</details>
-
-<br />
-
-<details open>
-<summary><strong>🎭 Personalization</strong></summary>
-
-<br />
-
-- **Local Customizations** - create your own gradient name, badges, and profile background visible only to you
-  - Animated gradients with configurable rotation, shadow color & intensity
-  - Add/remove custom badge slots
-  - Custom profile background via URL
-- **Sound Swapper** - replace any in-game sound (hitmarker, gunshots, kills, etc.) with your own `.mp3`
-- **Custom Menu Themes** - Dark, Light, Dawn, or Glass
-- **Custom Menu Keybind** - set any key to open/close the menu
-
-</details>
-
-<br />
-
-<details open>
-<summary><strong>🌐 Browse & Community</strong></summary>
-
-<br />
-
-- **Community Hub** - browse and apply community-made CSS packs, crosshairs, skyboxes, map textures, kill icons, sounds, and maps directly in the client
-- **Map Images in Server List** - visual map previews when browsing servers
-- **Custom List Price** - set your own default listing price
-- **Shift-click username** in Global Chat to open their profile
-- **Shift-click link** in Friends List to copy the game link
-
-</details>
-
-<br />
-
-<details open>
-<summary><strong>🛠️ Client Tools</strong></summary>
-
-<br />
-
-- **Userscripts** - run custom JS scripts inside the client
-- **Discord Rich Presence** - show your Kirka status on Discord
-- **Pack / Chest Auto Opener** - unbox while playing
-- **Proxy URL** - choose from multiple proxies
-
-</details>
-
-<br />
-
----
-
-## Hotkeys
-
-| Key | Action |
-|-----|--------|
-| `F2` | Screenshot and copy to clipboard |
-| `F4` | Return to `https://kirka.io` |
-| `F5` | Reload |
-| `F6` | Load URL |
-| `F7` | Copy URL |
-| `F11` | Toggle Fullscreen |
-| `F12` / `Ctrl+Shift+I` | Open DevTools |
-| `Shift + Click` name in chat | Open player profile |
-| `Shift + Click` link in friends list | Copy game link |
-
----
-
-## Is it Safe?
-
-**Yes.** Dawn Client is 100% safe to use. All releases are built directly using github workflows.
-
-If you run into any issues, join the [Discord server](https://discord.gg/VsMEQ3HWs2) to report bugs or get support from the community.
-
----
+Output: `build/macos-client-setup-mac-1.1.0.dmg`
 
 ## Credits
 
-| Contributor | Contribution |
-|-------------|--------------|
-| **[Kirka Community Hub](https://kirkacommunityhub.pages.dev)** | Browser Assets |
-| **irrvlo** | Original Juice Client & Kirka Tools |
-| **Daymian** | Maps and additional CSS |
-| **CarrySheriff** | Original Pack/Chest opener, Map Images, Market Names, Custom List Price |
-| **Cheeseburger** | Updated Pack/Chest opener |
-| **AwesomeSam** | Basic Resource Swapper |
-| **Error430** | Performance optimizations |
-| **robertpakalns** | Bug fixes, optimizations & tweaks |
-
----
-
-<div align="center">
-
-<sub>Built with ❤️ for the Kirka.io community &nbsp;•&nbsp; <a href="https://discord.gg/VsMEQ3HWs2">Join the Discord</a></sub>
-
-</div>
+Built on top of [Dawn Client](https://github.com/zVipexx/dawn-client) by zVipexx.

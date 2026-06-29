@@ -137,16 +137,34 @@ window.addEventListener("DOMContentLoaded", async () => {
   editResourceSwapper();
   initGallery();
 
+  const fetchCache = new Map();
+  const inflightFetches = new Map();
   const cachedFetch = async (cacheKey, url, ttlMs = 3600000) => {
+    const now = Date.now();
+    const entry = fetchCache.get(cacheKey);
+    if (entry && now - entry.ts < ttlMs) return entry.data;
+    const existing = inflightFetches.get(cacheKey);
+    if (existing) return existing;
     const tsKey = cacheKey + "_ts";
     const cached = localStorage.getItem(cacheKey);
     const timestamp = localStorage.getItem(tsKey);
-    if (cached && timestamp && Date.now() - Number(timestamp) < ttlMs) {
-      return JSON.parse(cached);
+    if (cached && timestamp && now - Number(timestamp) < ttlMs) {
+      const data = JSON.parse(cached);
+      fetchCache.set(cacheKey, { data, ts: now });
+      return data;
     }
-    const data = await fetch(url).then(r => r.json());
+    const promise = fetch(url).then(r => {
+      inflightFetches.delete(cacheKey);
+      return r.json();
+    }).catch(e => {
+      inflightFetches.delete(cacheKey);
+      throw e;
+    });
+    inflightFetches.set(cacheKey, promise);
+    const data = await promise;
     localStorage.setItem(cacheKey, JSON.stringify(data));
-    localStorage.setItem(tsKey, String(Date.now()));
+    localStorage.setItem(tsKey, String(now));
+    fetchCache.set(cacheKey, { data, ts: now });
     return data;
   };
 
@@ -241,6 +259,8 @@ window.addEventListener("DOMContentLoaded", async () => {
 
       const addImage = () => {
         const img = document.createElement("img");
+        img.decoding = "async";
+        img.loading = "lazy";
         img.className = `news-img ${newsItem.imgType}`;
         img.src = newsItem.img;
         img.style = `
@@ -1948,13 +1968,34 @@ window.addEventListener("DOMContentLoaded", async () => {
       const origDrawElements = gl.drawElements.bind(gl);
       const origBindTexture = gl.bindTexture.bind(gl);
 
+      let _ax = 0, _ay = 0, _az = 0;
       let activeThisFrame = false;
       let lastBoundTexture = null;
-      let seenMatricesThisFrame = new Set();
+      let seenMatricesThisFrame = Object.create(null);
+      let seenCount = 0;
       let lastFrameTime = -1;
       let currentFrameWeaponSig = null;
-
       let lastClearMask = 0;
+
+      const _cfgFallback = { size: 1.0, offsetX: 0, offsetY: 0, offsetZ: 0 };
+      const _globalFallback = { wireframe: false, colorEnabled: false, rgb: false, colorHex: "#FFFFFF" };
+      const _armFallback = { size: 1.0, offsetX: 0, offsetY: 0, offsetZ: 0, wireframe: false, colorEnabled: false, colorHex: "#FFFFFF", rgb: false };
+
+      const _hexCache = Object.create(null);
+      const _parseHex = (hex) => {
+        let cached = _hexCache[hex];
+        if (cached) return cached;
+        const h = hex.replace("#", "");
+        cached = [parseInt(h.substring(0, 2), 16), parseInt(h.substring(2, 4), 16), parseInt(h.substring(4, 6), 16)];
+        _hexCache[hex] = cached;
+        return cached;
+      };
+
+      const _clearSeen = () => {
+        if (seenCount > 64) { seenMatricesThisFrame = Object.create(null); seenCount = 0; return; }
+        for (const k in seenMatricesThisFrame) delete seenMatricesThisFrame[k];
+        seenCount = 0;
+      };
 
       const origClear = gl.clear.bind(gl);
       gl.clear = (mask) => {
@@ -1972,7 +2013,7 @@ window.addEventListener("DOMContentLoaded", async () => {
 
         const now = performance.now();
         if (now !== lastFrameTime) {
-          seenMatricesThisFrame.clear();
+          _clearSeen();
           currentFrameWeaponSig = null;
           lastFrameTime = now;
         }
@@ -2001,10 +2042,11 @@ window.addEventListener("DOMContentLoaded", async () => {
 
           if (weaponKeyframeNumMap[sigNum] !== undefined) {
             const fpNum = (Math.round(slice[0] * 1000) * 1000000000000) + (Math.round(slice[5] * 1000) * 1000000000) + (Math.round(slice[10] * 1000) * 1000000) + (Math.round(slice[12] * 10000) * 100) + Math.round(slice[14] * 10000);
-            if (seenMatricesThisFrame.has(fpNum)) {
+            if (seenMatricesThisFrame[fpNum]) {
               return origUniformMatrix4fv(location, transpose, data, srcOffset, srcLength);
             }
-            seenMatricesThisFrame.add(fpNum);
+            seenMatricesThisFrame[fpNum] = 1;
+            seenCount++;
 
             if (sigToWeaponNumId[sigNum]) {
               currentFrameWeaponSig = sigNum;
@@ -2018,12 +2060,8 @@ window.addEventListener("DOMContentLoaded", async () => {
               inspectingWeaponId = null;
             }
 
-            const weaponCfg = window.dawnWeaponConfig?.getSettings?.(currentWeaponId) || {
-              size: 1.0, offsetX: 0, offsetY: 0, offsetZ: 0
-            };
-            const globalCfg = window.dawnWeaponConfig || {
-              wireframe: false, colorEnabled: false, rgb: false, colorHex: "#FFFFFF"
-            };
+            const weaponCfg = window.dawnWeaponConfig?.getSettings?.(currentWeaponId) || _cfgFallback;
+            const globalCfg = window.dawnWeaponConfig || _globalFallback;
 
             if (globalCfg.colorEnabled) {
               if (globalCfg.rgb) {
@@ -2032,11 +2070,8 @@ window.addEventListener("DOMContentLoaded", async () => {
                 origBindTexture(gl.TEXTURE_2D, rgbTexture);
                 gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, rgbPixel);
               } else {
-                const hex = globalCfg.colorHex.replace("#", "");
-                rgbPixel[0] = parseInt(hex.substring(0, 2), 16);
-                rgbPixel[1] = parseInt(hex.substring(2, 4), 16);
-                rgbPixel[2] = parseInt(hex.substring(4, 6), 16);
-                rgbPixel[3] = 255;
+                const c = _parseHex(globalCfg.colorHex);
+                rgbPixel[0] = c[0]; rgbPixel[1] = c[1]; rgbPixel[2] = c[2]; rgbPixel[3] = 255;
                 origBindTexture(gl.TEXTURE_2D, rgbTexture);
                 gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, rgbPixel);
               }
@@ -2055,9 +2090,9 @@ window.addEventListener("DOMContentLoaded", async () => {
             let base = weaponCfg.size ?? 1.0;
             matBuf.set(slice);
             let scale = base;
-            let ox = weaponCfg.offsetX ?? 0;
-            let oy = weaponCfg.offsetY ?? 0;
-            let oz = weaponCfg.offsetZ ?? 0;
+            _ax = weaponCfg.offsetX ?? 0;
+            _ay = weaponCfg.offsetY ?? 0;
+            _az = weaponCfg.offsetZ ?? 0;
             let spinZAngle = 0;
             let spinXAngle = 0;
             let spinYAngle = 0;
@@ -2076,9 +2111,9 @@ window.addEventListener("DOMContentLoaded", async () => {
                 const t = Math.min(elapsed / inspectDuration, 1.0);
                 const kf = animFn(t);
                 scale = base * (kf.scale ?? 1);
-                ox += (kf.offsetX ?? 0) * scale;
-                oy += (kf.offsetY ?? 0) * scale;
-                oz += (kf.offsetZ ?? 0) * scale;
+                _ax += (kf.offsetX ?? 0) * scale;
+                _ay += (kf.offsetY ?? 0) * scale;
+                _az += (kf.offsetZ ?? 0) * scale;
                 spinZAngle = kf.spinZ ?? 0;
                 spinXAngle = kf.spinX ?? 0;
                 spinYAngle = kf.spinY ?? 0;
@@ -2095,9 +2130,9 @@ window.addEventListener("DOMContentLoaded", async () => {
             matBuf[0] *= scale; matBuf[1] *= scale; matBuf[2] *= scale;
             matBuf[4] *= scale; matBuf[5] *= scale; matBuf[6] *= scale;
             matBuf[8] *= scale; matBuf[9] *= scale; matBuf[10] *= scale;
-            matBuf[12] += ox;
-            matBuf[13] += oy;
-            matBuf[14] += oz;
+            matBuf[12] += _ax;
+            matBuf[13] += _ay;
+            matBuf[14] += _az;
 
             if (spinZAngle !== 0) applyZSpin(matBuf, spinZAngle);
             if (baseSpinXAngle !== 0) applyXSpin(matBuf, baseSpinXAngle);
@@ -2111,10 +2146,11 @@ window.addEventListener("DOMContentLoaded", async () => {
 
           if (armSigsNum.has(sigNum)) {
             const fpNum = (Math.round(slice[0] * 1000) * 1000000000000) + (Math.round(slice[5] * 1000) * 1000000000) + (Math.round(slice[10] * 1000) * 1000000) + (Math.round(slice[12] * 10000) * 100) + Math.round(slice[14] * 10000);
-            if (seenMatricesThisFrame.has(fpNum)) {
+            if (seenMatricesThisFrame[fpNum]) {
               return origUniformMatrix4fv(location, transpose, data, srcOffset, srcLength);
             }
-            seenMatricesThisFrame.add(fpNum);
+            seenMatricesThisFrame[fpNum] = 1;
+            seenCount++;
 
             const currentWeaponId = sigToWeaponNumId[currentFrameWeaponSig] || sigToWeaponNumId[latchedWeaponSig] || "vita";
 
@@ -2124,17 +2160,14 @@ window.addEventListener("DOMContentLoaded", async () => {
               return origUniformMatrix4fv(location, transpose, data, srcOffset, srcLength);
             }
 
-            const armSettings = window.dawnWeaponConfig?.getArmSettings?.(currentWeaponId, armType) || {
-              size: 1.0, offsetX: 0, offsetY: 0, offsetZ: 0,
-              wireframe: false, colorEnabled: false, colorHex: "#FFFFFF", rgb: false
-            };
+            const armSettings = window.dawnWeaponConfig?.getArmSettings?.(currentWeaponId, armType) || _armFallback;
 
             matBuf.set(slice);
 
             let armScale = armSettings.size ?? 1.0;
-            let ox = armSettings.offsetX ?? 0;
-            let oy = armSettings.offsetY ?? 0;
-            let oz = armSettings.offsetZ ?? 0;
+            _ax = armSettings.offsetX ?? 0;
+            _ay = armSettings.offsetY ?? 0;
+            _az = armSettings.offsetZ ?? 0;
 
             let armSpinX = 0;
             let armSpinY = 0;
@@ -2147,9 +2180,9 @@ window.addEventListener("DOMContentLoaded", async () => {
                 const elapsed = now - inspectStart;
                 const t = Math.min(elapsed / inspectDuration, 1.0);
                 const kf = armFn(t);
-                ox += (kf.offsetX ?? 0) * armScale;
-                oy += (kf.offsetY ?? 0) * armScale;
-                oz += (kf.offsetZ ?? 0) * armScale;
+                _ax += (kf.offsetX ?? 0) * armScale;
+                _ay += (kf.offsetY ?? 0) * armScale;
+                _az += (kf.offsetZ ?? 0) * armScale;
                 armSpinX = kf.spinX ?? 0;
                 armSpinY = kf.spinY ?? 0;
                 armSpinZ = kf.spinZ ?? 0;
@@ -2159,9 +2192,9 @@ window.addEventListener("DOMContentLoaded", async () => {
             matBuf[0] *= armScale; matBuf[1] *= armScale; matBuf[2] *= armScale;
             matBuf[4] *= armScale; matBuf[5] *= armScale; matBuf[6] *= armScale;
             matBuf[8] *= armScale; matBuf[9] *= armScale; matBuf[10] *= armScale;
-            matBuf[12] += ox;
-            matBuf[13] += oy;
-            matBuf[14] += oz;
+            matBuf[12] += _ax;
+            matBuf[13] += _ay;
+            matBuf[14] += _az;
 
             if (armSpinX !== 0) applyXSpin(matBuf, armSpinX);
             if (armSpinY !== 0) applyYSpin(matBuf, armSpinY);
@@ -2174,11 +2207,8 @@ window.addEventListener("DOMContentLoaded", async () => {
                 origBindTexture(gl.TEXTURE_2D, rgbTexture);
                 gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, rgbPixel);
               } else {
-                const hex = (armSettings.colorHex || "#FFFFFF").replace("#", "");
-                rgbPixel[0] = parseInt(hex.substring(0, 2), 16);
-                rgbPixel[1] = parseInt(hex.substring(2, 4), 16);
-                rgbPixel[2] = parseInt(hex.substring(4, 6), 16);
-                rgbPixel[3] = 255;
+                const c = _parseHex(armSettings.colorHex || "#FFFFFF");
+                rgbPixel[0] = c[0]; rgbPixel[1] = c[1]; rgbPixel[2] = c[2]; rgbPixel[3] = 255;
                 origBindTexture(gl.TEXTURE_2D, rgbTexture);
                 gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, rgbPixel);
               }
@@ -2202,14 +2232,14 @@ window.addEventListener("DOMContentLoaded", async () => {
       gl.drawArrays = (mode, first, count) => {
         if (activeThisFrame) mode = toWireframe(mode);
         activeThisFrame = false;
-        seenMatricesThisFrame.clear();
+        _clearSeen();
         return origDrawArrays(mode, first, count);
       };
 
       gl.drawElements = (mode, count, type, offset) => {
         if (activeThisFrame) mode = toWireframe(mode);
         activeThisFrame = false;
-        seenMatricesThisFrame.clear();
+        _clearSeen();
         return origDrawElements(mode, count, type, offset);
       };
 
@@ -2283,6 +2313,8 @@ window.addEventListener("DOMContentLoaded", async () => {
 
         if (customs.discord) {
           const linkedBadge = document.createElement("img");
+          linkedBadge.decoding = "async";
+          linkedBadge.loading = "lazy";
           linkedBadge.src = "https://juice.irrvlo.xyz/linked.png";
           linkedBadge.style = badgeStyle;
           badgesElem.appendChild(linkedBadge);
@@ -2290,6 +2322,8 @@ window.addEventListener("DOMContentLoaded", async () => {
 
         if (customs.booster) {
           const boosterBadge = document.createElement("img");
+          boosterBadge.decoding = "async";
+          boosterBadge.loading = "lazy";
           boosterBadge.src = "https://juice.irrvlo.xyz/booster.png";
           boosterBadge.style = badgeStyle;
           badgesElem.appendChild(boosterBadge);
@@ -2298,7 +2332,8 @@ window.addEventListener("DOMContentLoaded", async () => {
         if (customs.badges && customs.badges.length) {
           customs.badges.forEach((badge) => {
             const img = document.createElement("img");
-
+            img.decoding = "async";
+            img.loading = "lazy";
             if (badge.startsWith("/") || badge.match(/^[A-Za-z]:\\/)) {
               const filePath = badge.replace(/\\/g, "/");
               img.src = `file://${filePath.startsWith("/") ? "" : "/"}${filePath}`;
@@ -2525,12 +2560,29 @@ window.addEventListener("DOMContentLoaded", async () => {
         else removeSpectateButton(server);
       })
 
-      new MutationObserver(() => {
-        document.querySelectorAll(".server").forEach((server) => {
-          if (server.classList.contains("is-locked") && settings.spectate_full_games) addSpectateButton(server);
-          else removeSpectateButton(server);
-        })
-      }).observe(document.querySelector(".servers .list-cont>.list"), { childList: true, characterData: true })
+      new MutationObserver((mutations) => {
+        const seen = new WeakSet();
+        for (const mutation of mutations) {
+          for (const node of mutation.addedNodes) {
+            if (node.nodeType === Node.ELEMENT_NODE) {
+              const servers = node.matches?.(".server") ? [node] : node.querySelectorAll?.(".server") || [];
+              for (const server of servers) {
+                if (!seen.has(server)) {
+                  seen.add(server);
+                  if (server.classList.contains("is-locked") && settings.spectate_full_games) addSpectateButton(server);
+                  else removeSpectateButton(server);
+                }
+              }
+            }
+          }
+          for (const node of mutation.removedNodes) {
+            if (node.nodeType === Node.ELEMENT_NODE) {
+              const servers = node.matches?.(".server") ? [node] : node.querySelectorAll?.(".server") || [];
+              for (const server of servers) removeSpectateButton(server);
+            }
+          }
+        }
+      }).observe(document.querySelector(".servers .list-cont>.list"), { childList: true, subtree: true, characterData: true })
     }
 
     if (!window.servers) {
@@ -3019,7 +3071,8 @@ window.addEventListener("DOMContentLoaded", async () => {
           if (badgesData.length) {
             badgesData.forEach((badge) => {
               const img = document.createElement("img");
-
+              img.decoding = "async";
+              img.loading = "lazy";
               if (badge.startsWith("/") || badge.match(/^[A-Za-z]:\\/)) {
                 const filePath = badge.replace(/\\/g, "/");
                 img.src = `file://${filePath.startsWith("/") ? "" : "/"}${filePath}`;
@@ -3515,6 +3568,7 @@ window.addEventListener("DOMContentLoaded", async () => {
 
       const svgEl = objectives.querySelector("svg");
       const img = document.createElement("img");
+      img.decoding = "async";
       img.src = `file://${__dirname}/../assets/img/flag.png`;
       img.style.width = "1rem";
       img.style.height = "1rem";
@@ -3688,24 +3742,32 @@ window.addEventListener("DOMContentLoaded", async () => {
                 }
               }
 
-              const addBadge = (src) => {
-                if (![...badgesElem.children].some((img) => img.src === src)) {
-                  const img = document.createElement("img");
-                  if (src.startsWith("/") || src.match(/^[A-Za-z]:\\/)) {
-                    const filePath = src.replace(/\\/g, "/");
-                    img.src = `file://${filePath.startsWith("/") ? "" : "/"}${filePath}`;
-                  } else {
-                    img.src = src;
-                  }
-                  img.style.cssText = badgeStyle;
-                  badgesElem.appendChild(img);
+              const badgeExists = (src) => {
+                const children = badgesElem.children;
+                for (let bi = 0; bi < children.length; bi++) {
+                  if (children[bi].src === src) return true;
                 }
+                return false;
+              };
+              const addBadge = (src) => {
+                if (badgeExists(src)) return;
+                const img = document.createElement("img");
+                img.decoding = "async";
+                img.loading = "lazy";
+                if (src.startsWith("/") || src.match(/^[A-Za-z]:\\/)) {
+                  const filePath = src.replace(/\\/g, "/");
+                  img.src = `file://${filePath.startsWith("/") ? "" : "/"}${filePath}`;
+                } else {
+                  img.src = src;
+                }
+                img.style.cssText = badgeStyle;
+                badgesElem.appendChild(img);
               };
 
               if (customs.discord) addBadge("https://juice.irrvlo.xyz/linked.png");
               if (customs.booster) addBadge("https://juice.irrvlo.xyz/booster.png");
               if (customs.badges?.length) {
-                customs.badges.forEach((badge) => addBadge(badge));
+                for (let bi = 0; bi < customs.badges.length; bi++) addBadge(customs.badges[bi]);
               }
             } else {
               if (playerLeft) playerLeft.querySelector(".juice-badges")?.remove();
@@ -3806,17 +3868,21 @@ window.addEventListener("DOMContentLoaded", async () => {
               }
 
               const addBadge = (src) => {
-                if (![...badgesElem.children].some((img) => img.src === src)) {
-                  const img = document.createElement("img");
-                  if (src.startsWith("/") || src.match(/^[A-Za-z]:\\/)) {
-                    const filePath = src.replace(/\\/g, "/");
-                    img.src = `file://${filePath.startsWith("/") ? "" : "/"}${filePath}`;
-                  } else {
-                    img.src = src;
-                  }
-                  img.style.cssText = badgeStyle;
-                  badgesElem.appendChild(img);
+                const children = badgesElem.children;
+                for (let bi = 0; bi < children.length; bi++) {
+                  if (children[bi].src === src) return;
                 }
+                const img = document.createElement("img");
+                img.decoding = "async";
+                img.loading = "lazy";
+                if (src.startsWith("/") || src.match(/^[A-Za-z]:\\/)) {
+                  const filePath = src.replace(/\\/g, "/");
+                  img.src = `file://${filePath.startsWith("/") ? "" : "/"}${filePath}`;
+                } else {
+                  img.src = src;
+                }
+                img.style.cssText = badgeStyle;
+                badgesElem.appendChild(img);
               };
 
               if (customs.discord) addBadge("https://juice.irrvlo.xyz/linked.png");
@@ -4646,6 +4712,8 @@ window.addEventListener("DOMContentLoaded", async () => {
 
             if (customs.discord) {
               const linkedBadge = document.createElement("img");
+              linkedBadge.decoding = "async";
+              linkedBadge.loading = "lazy";
               linkedBadge.src = "https://juice.irrvlo.xyz/linked.png";
               linkedBadge.style.cssText = badgeStyle;
               badgesElem.appendChild(linkedBadge);
@@ -4653,6 +4721,8 @@ window.addEventListener("DOMContentLoaded", async () => {
 
             if (customs.booster) {
               const boosterBadge = document.createElement("img");
+              boosterBadge.decoding = "async";
+              boosterBadge.loading = "lazy";
               boosterBadge.src = "https://juice.irrvlo.xyz/booster.png";
               boosterBadge.style.cssText = badgeStyle;
               badgesElem.appendChild(boosterBadge);
@@ -4661,6 +4731,8 @@ window.addEventListener("DOMContentLoaded", async () => {
             if (customs.badges?.length) {
               customs.badges.forEach((badge) => {
                 const img = document.createElement("img");
+                img.decoding = "async";
+                img.loading = "lazy";
                 if (badge.startsWith("/") || badge.match(/^[A-Za-z]:\\/)) {
                   const filePath = badge.replace(/\\/g, "/");
                   img.src = `file://${filePath.startsWith("/") ? "" : "/"}${filePath}`;

@@ -248,11 +248,12 @@
     height: 1rem;
     background: white;
     border-radius: 50%;
-    transition: left 0.3s;
+    transform: translateX(0);
+    transition: transform 0.3s;
 }
 
 .menu .checkbox input:checked+label:after {
-    left: 1.75rem;
+    transform: translateX(1.5rem);
 }
 
 .menu>.content {

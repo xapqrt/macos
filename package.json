@@ -16,7 +16,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/zVipexx/dawn-client.git"
+    "url": "https://github.com/xapqrt/macos.git"
   },
   "dependencies": {
     "discord-rpc": "^4.0.1",
