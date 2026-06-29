@@ -1,6 +1,6 @@
 const { app } = require("electron");
 
-app.commandLine.appendSwitch("js-flags", "--max-old-space-size=768 --compact-on-empty --optimize-for-size --optimize-for-max-heap --turbo-fast-api-calls --turbo-prophet --min-heap-size=256");
+app.commandLine.appendSwitch("js-flags", "--max-old-space-size=1024 --compact-on-empty --turbo-fast-api-calls --turbo-prophet");
 
 const { initSplash } = require("./windows/splash");
 
