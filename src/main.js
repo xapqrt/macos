@@ -1,6 +1,6 @@
 const { app } = require("electron");
 
-app.commandLine.appendSwitch("js-flags", "--max-old-space-size=1024 --turbo-fast-api-calls");
+// No custom V8 flags — V8 8.8 default heuristics work best for gaming
 
 const { initSplash } = require("./windows/splash");
 
