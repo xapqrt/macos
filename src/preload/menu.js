@@ -777,8 +777,13 @@ class Menu {
   }
 
   saveWeaponSettings() {
-    localStorage.setItem("dawn_weapon_config", JSON.stringify(this.weaponSettings));
-    this.updateGlobalWeaponConfig();
+    if (!this._saveWpRaf) {
+      this._saveWpRaf = requestAnimationFrame(() => {
+        this._saveWpRaf = 0;
+        localStorage.setItem("dawn_weapon_config", JSON.stringify(this.weaponSettings));
+        this.updateGlobalWeaponConfig();
+      });
+    }
   }
 
   setVersion() {

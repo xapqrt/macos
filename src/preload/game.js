@@ -1976,6 +1976,7 @@ window.addEventListener("DOMContentLoaded", async () => {
       let lastFrameTime = -1;
       let currentFrameWeaponSig = null;
       let lastClearMask = 0;
+      let _cachedWeaponCfg = null, _cachedWeaponIds = "";
 
       const _cfgFallback = { size: 1.0, offsetX: 0, offsetY: 0, offsetZ: 0 };
       const _globalFallback = { wireframe: false, colorEnabled: false, rgb: false, colorHex: "#FFFFFF" };
@@ -1992,6 +1993,8 @@ window.addEventListener("DOMContentLoaded", async () => {
       };
 
       const _clearSeen = () => {
+        _cachedWeaponCfg = null;
+        _cachedWeaponIds = "";
         if (seenCount > 64) { seenMatricesThisFrame = Object.create(null); seenCount = 0; return; }
         for (const k in seenMatricesThisFrame) delete seenMatricesThisFrame[k];
         seenCount = 0;
@@ -2060,7 +2063,14 @@ window.addEventListener("DOMContentLoaded", async () => {
               inspectingWeaponId = null;
             }
 
-            const weaponCfg = window.dawnWeaponConfig?.getSettings?.(currentWeaponId) || _cfgFallback;
+            let weaponCfg;
+            if (_cachedWeaponCfg && _cachedWeaponIds === currentWeaponId) {
+              weaponCfg = _cachedWeaponCfg;
+            } else {
+              weaponCfg = window.dawnWeaponConfig?.getSettings?.(currentWeaponId) || _cfgFallback;
+              _cachedWeaponCfg = weaponCfg;
+              _cachedWeaponIds = currentWeaponId;
+            }
             const globalCfg = window.dawnWeaponConfig || _globalFallback;
 
             if (globalCfg.colorEnabled) {
@@ -2068,12 +2078,12 @@ window.addEventListener("DOMContentLoaded", async () => {
                 const [r, g, b] = hsvToRgb((now / 3000) * 360);
                 rgbPixel[0] = r; rgbPixel[1] = g; rgbPixel[2] = b; rgbPixel[3] = 255;
                 origBindTexture(gl.TEXTURE_2D, rgbTexture);
-                gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, rgbPixel);
+                gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, rgbPixel);
               } else {
                 const c = _parseHex(globalCfg.colorHex);
                 rgbPixel[0] = c[0]; rgbPixel[1] = c[1]; rgbPixel[2] = c[2]; rgbPixel[3] = 255;
                 origBindTexture(gl.TEXTURE_2D, rgbTexture);
-                gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, rgbPixel);
+                gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, rgbPixel);
               }
             } else if (lastBoundTexture) {
               origBindTexture(gl.TEXTURE_2D, lastBoundTexture);
@@ -2160,7 +2170,15 @@ window.addEventListener("DOMContentLoaded", async () => {
               return origUniformMatrix4fv(location, transpose, data, srcOffset, srcLength);
             }
 
-            const armSettings = window.dawnWeaponConfig?.getArmSettings?.(currentWeaponId, armType) || _armFallback;
+            const armCacheKey = currentWeaponId + armType;
+            let armSettings;
+            if (_cachedWeaponCfg && _cachedWeaponIds === armCacheKey) {
+              armSettings = _cachedWeaponCfg;
+            } else {
+              armSettings = window.dawnWeaponConfig?.getArmSettings?.(currentWeaponId, armType) || _armFallback;
+              _cachedWeaponCfg = armSettings;
+              _cachedWeaponIds = armCacheKey;
+            }
 
             matBuf.set(slice);
 
@@ -2205,12 +2223,12 @@ window.addEventListener("DOMContentLoaded", async () => {
                 const [r, g, b] = hsvToRgb((now / 3000) * 360);
                 rgbPixel[0] = r; rgbPixel[1] = g; rgbPixel[2] = b; rgbPixel[3] = 255;
                 origBindTexture(gl.TEXTURE_2D, rgbTexture);
-                gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, rgbPixel);
+                gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, rgbPixel);
               } else {
                 const c = _parseHex(armSettings.colorHex || "#FFFFFF");
                 rgbPixel[0] = c[0]; rgbPixel[1] = c[1]; rgbPixel[2] = c[2]; rgbPixel[3] = 255;
                 origBindTexture(gl.TEXTURE_2D, rgbTexture);
-                gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, rgbPixel);
+                gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, rgbPixel);
               }
             } else if (lastBoundTexture) {
               origBindTexture(gl.TEXTURE_2D, lastBoundTexture);
@@ -3466,28 +3484,33 @@ window.addEventListener("DOMContentLoaded", async () => {
       });
     };
 
+    let _kdKillsEl = null, _kdDeathsEl = null, _kdEl = null;
+
+    const cacheKDSelectors = () => {
+      if (!_kdKillsEl || !document.contains(_kdKillsEl)) _kdKillsEl = document.querySelector(".kill-death .kill");
+      if (!_kdDeathsEl || !document.contains(_kdDeathsEl)) _kdDeathsEl = document.querySelector("div > svg.icon-death")?.parentElement;
+      if (!_kdEl || !document.contains(_kdEl)) _kdEl = document.querySelector(".kill-death .kd");
+    };
+
     const updateKD = () => {
-      const kills = document.querySelector(".kill-death .kill");
-      const deaths = document.querySelector("div > svg.icon-death")?.parentElement;
-      const kd = document.querySelector(".kill-death .kd");
+      cacheKDSelectors();
+      if (!_kdKillsEl || !_kdDeathsEl || !_kdEl) return;
 
-      if (!kills || !deaths || !kd) return;
-
-      const killCount = parseFloat(kills.innerText);
-      const deathCount = parseFloat(deaths.innerText) || 1;
+      const killCount = parseFloat(_kdKillsEl.innerText);
+      const deathCount = parseFloat(_kdDeathsEl.innerText) || 1;
       const kdRatio = (killCount / deathCount).toFixed(2);
 
-      const nextHtml = `<span class="kd-ratio">${kdRatio}</span> <span class="text-kd" style="font-size: 0.75rem;">K/D</span>`;
-      if (kd.innerHTML !== nextHtml) {
-        kd.innerHTML = nextHtml;
+      const ratioEl = _kdEl._kdRatioEl;
+      if (ratioEl && ratioEl.textContent !== kdRatio) {
+        ratioEl.textContent = kdRatio;
       }
     };
 
     const createKD = () => {
+      cacheKDSelectors();
       if (document.querySelector(".kill-death .kd")) document.querySelector(".kill-death .kd").remove();
-      const kills = document.querySelector(".kill-death .kill");
-      const deaths = document.querySelector("div > svg.icon-death")?.parentElement;
-      const kd = kills?.cloneNode(true);
+      if (!_kdKillsEl) return;
+      const kd = _kdKillsEl.cloneNode(true);
 
       if (!kd) return;
       kd.classList.add("kd");
@@ -3495,9 +3518,21 @@ window.addEventListener("DOMContentLoaded", async () => {
       kd.style.display = "flex";
       kd.style.alignItems = "center";
       kd.style.gap = "0.25rem";
-      kd.innerHTML = `<span class="kd-ratio">0</span> <span class="text-kd" style="font-size: 0.75rem;">K/D</span>`;
 
-      document.querySelector(".kill-death").insertBefore(kd, kills.parentElement.children[2]);
+      const ratioSpan = document.createElement("span");
+      ratioSpan.className = "kd-ratio";
+      ratioSpan.textContent = "0";
+      kd._kdRatioEl = ratioSpan;
+      const textSpan = document.createElement("span");
+      textSpan.className = "text-kd";
+      textSpan.style.cssText = "font-size: 0.75rem;";
+      textSpan.textContent = "K/D";
+      kd.textContent = "";
+      kd.appendChild(ratioSpan);
+      kd.appendChild(textSpan);
+
+      _kdKillsEl.parentElement.parentElement.insertBefore(kd, _kdKillsEl.parentElement.children[2]);
+      _kdEl = kd;
       const kdParent = document.querySelector(".kill-death");
       const kdObserver = new MutationObserver(updateKD);
       kdObserver.observe(kdParent, { childList: true, subtree: true, characterData: true });
@@ -3623,7 +3658,18 @@ window.addEventListener("DOMContentLoaded", async () => {
       hsp.style.display = "flex";
       hsp.style.alignItems = "center";
       hsp.style.gap = "0.25rem";
-      hsp.innerHTML = `<span class="hs-percentage">0</span> <span class="text-hs" style="font-size: 0.75rem;">HS%</span>`;
+
+      const pctSpan = document.createElement("span");
+      pctSpan.className = "hs-percentage";
+      pctSpan.textContent = "0";
+      hsp._hsPctEl = pctSpan;
+      const textSpan = document.createElement("span");
+      textSpan.className = "text-hs";
+      textSpan.style.cssText = "font-size: 0.75rem;";
+      textSpan.textContent = "HS%";
+      hsp.textContent = "";
+      hsp.appendChild(pctSpan);
+      hsp.appendChild(textSpan);
 
       kills.parentElement.insertBefore(hsp, kills.parentElement.children[5]);
 
@@ -3653,9 +3699,9 @@ window.addEventListener("DOMContentLoaded", async () => {
               const killCount = parseFloat(killsEl.innerText);
               const hsPercentage = (headshotsCount / killCount * 100).toFixed(2);
 
-              const nextHtml = `<span class="hs-percentage">${hsPercentage}</span> <span class="text-hs" style="font-size: 0.75rem;">HS%</span>`;
-              if (hsp.innerHTML !== nextHtml) {
-                hsp.innerHTML = nextHtml;
+              const pctEl = hsp._hsPctEl;
+              if (pctEl && pctEl.textContent !== hsPercentage) {
+                pctEl.textContent = hsPercentage;
               }
             }
           }
