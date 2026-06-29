@@ -1,6 +1,6 @@
 appId: com.zvipexx.dawn
 productName: macos client
-electronVersion: 10.4.7
+electronVersion: 11.5.0
 directories:
   output: "build"
 npmRebuild: false

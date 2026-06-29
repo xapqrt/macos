@@ -2,11 +2,23 @@
 
 A performance-optimized Electron client for Kirka.io, forked from [Dawn Client](https://github.com/zVipexx/dawn-client) by zVipexx.
 
-Built for **maximum stable FPS, minimal input latency, and zero micro-stuttering** on macOS (Apple Silicon via Rosetta 2, Electron 10 x64).
+Built for **maximum stable FPS, minimal input latency, and zero micro-stuttering** on macOS. Runs **native arm64** on Apple Silicon (M1–M4) — no Rosetta 2 translation, no double-JIT penalty.
 
 ---
 
 ## Changes vs Dawn Client
+
+### Architecture
+
+| Area | Dawn Client | macos client |
+|------|-------------|--------------|
+| Electron | 10.4.7 (x64 only, Rosetta 2 on Apple Silicon) | **11.5.0** (native arm64 on M1–M4, zero translation overhead) |
+| Chromium | 85 | 87 |
+| V8 | 8.5 | 8.7 |
+| Node.js | 12.16 | 12.18 |
+| Binary format | Mach-O x86_64 | **Mach-O arm64** — executes directly on Apple Silicon performance cores |
+| Auto-updater | `electron-updater` with GitHub check on launch (blocking) | **Removed** — instant startup, no network fetch |
+| electron-updater package | Present as dependency | **Removed** from dependencies |
 
 ### Performance (WebGL Hot Path)
 
@@ -103,10 +115,10 @@ Built for **maximum stable FPS, minimal input latency, and zero micro-stuttering
 
 ```bash
 npm install
-npm_config_arch=x64 npx electron-builder --mac --x64
+npm run build
 ```
 
-Output: `build/macos-client-setup-mac-1.1.0.dmg`
+Output: `build/dawn-client-setup-mac-1.1.0.dmg` (native arm64)
 
 ## Credits
 
